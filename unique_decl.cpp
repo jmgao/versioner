@@ -118,10 +118,15 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
     }
 
     SymbolType symbolType;
-    if (isa<FunctionDecl>(decl)) {
+    FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
+    VarDecl* var_decl = dyn_cast<VarDecl>(decl);
+    if (function_decl) {
       symbolType = SymbolType::function;
-    } else if (isa<VarDecl>(decl)) {
+    } else if (var_decl) {
       symbolType = SymbolType::variable;
+      if (!var_decl->hasExternalStorage()) {
+        return true;
+      }
     } else {
       return true;
     }
