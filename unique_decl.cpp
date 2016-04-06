@@ -105,11 +105,17 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
   }
 
   bool VisitDecl(Decl* decl) {
+    if (decl->getParentFunctionOrMethod()) {
+      return true;
+    }
+
     ASTContext& ctx = decl->getASTContext();
     SourceManager& src_manager = ctx.getSourceManager();
 
     auto namedDecl = dyn_cast<NamedDecl>(decl);
-    if (!namedDecl) return true;
+    if (!namedDecl) {
+      return true;
+    }
 
     SymbolType symbolType;
     if (isa<FunctionDecl>(decl)) {
