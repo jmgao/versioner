@@ -1,5 +1,11 @@
 #undef NDEBUG
 #include <assert.h>
+#include <dirent.h>
+#include <err.h>
+#include <fts.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <iostream>
 #include <memory>
@@ -142,18 +148,113 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
   }
 };
 
-int main(int argc, const char** argv) {
-  CommonOptionsParser OptionsParser(argc, argv, VersionerCategory);
-  ClangTool Tool(OptionsParser.getCompilations(), OptionsParser.getSourcePathList());
+class HeaderCompilationDatabase : public CompilationDatabase {
+  std::string cwd;
+  std::vector<std::string> headers;
+  std::vector<std::string> include_dirs;
+
+ public:
+  HeaderCompilationDatabase(std::string cwd, std::vector<std::string> headers,
+                            std::vector<std::string> include_dirs)
+      : cwd(std::move(cwd)), headers(std::move(headers)), include_dirs(std::move(include_dirs)){
+  }
+
+  CompileCommand generateCompileCommand(const std::string& filename) const {
+    std::vector<std::string> command = { "clang-tool", filename, "-nostdlibinc" };
+    for (const auto& dir : include_dirs) {
+      command.push_back("-isystem");
+      command.push_back(dir);
+    }
+    command.push_back("-DANDROID");
+    command.push_back("-D_FORTIFY_SOURCE=2");
+    command.push_back("-target");
+    command.push_back("arm-linux-androideabi");
+    return CompileCommand(cwd, filename, command);
+  }
+
+  std::vector<CompileCommand> getAllCompileCommands() const override {
+    std::vector<CompileCommand> commands;
+    for (const std::string& file : headers) {
+      commands.push_back(generateCompileCommand(file));
+    }
+    return commands;
+  }
+
+  std::vector<CompileCommand> getCompileCommands(StringRef file) const override {
+    std::vector<CompileCommand> commands;
+    commands.push_back(generateCompileCommand(file));
+    return commands;
+  }
+
+  std::vector<std::string> getAllFiles() const override {
+    return headers;
+  }
+};
+
+static std::vector<std::string> collect_files(const char* directory) {
+  std::vector<std::string> files;
+
+  char* dir_argv[2] = { const_cast<char*>(directory), nullptr };
+  FTS* fts = fts_open(dir_argv, FTS_LOGICAL | FTS_NOCHDIR, nullptr);
+
+  if (!fts) {
+    err(1, "failed to open directory '%s'", directory);
+  }
+
+  FTSENT* ent;
+  while ((ent = fts_read(fts))) {
+    if (ent->fts_info & (FTS_D | FTS_DP)) {
+      continue;
+    }
+
+    files.push_back(ent->fts_path);
+  }
+
+  fts_close(fts);
+  return files;
+}
+
+static void compile_headers(SymbolDatabase& database, const char* header_directory,
+                            const char* dep_directory) {
+  std::string cwd(PATH_MAX, '\0');
+  getcwd(&cwd[0], PATH_MAX);
+  std::vector<std::string> headers = collect_files(header_directory);
+
+  std::vector<std::string> dependencies = { header_directory };
+  if (dep_directory) {
+    DIR* deps = opendir(dep_directory);
+    if (!deps) {
+      err(1, "failed to open dependency directory");
+    }
+
+    struct dirent* dent;
+    while ((dent = readdir(deps))) {
+      dependencies.push_back(std::string(dep_directory) + "/" + dent->d_name);
+    }
+
+    closedir(deps);
+  }
+
+  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies);
+  ClangTool tool(compilationDatabase, headers);
+  Visitor visitor(database);
 
   std::vector<std::unique_ptr<ASTUnit>> asts;
-  Tool.buildASTs(asts);
-
-  SymbolDatabase symbolDatabase;
-  Visitor visitor(symbolDatabase);
+  tool.buildASTs(asts);
   for (const auto& ast : asts) {
     visitor.TraverseDecl(ast->getASTContext().getTranslationUnitDecl());
   }
+}
+
+int main(int argc, const char** argv) {
+  SymbolDatabase symbolDatabase;
+
+  if (argc != 3) {
+    printf("usage: unique_decl [header directory] [header dependency directory]\n");
+    return 1;
+  }
+
+  compile_headers(symbolDatabase, argv[1], argv[2]);
   symbolDatabase.dump();
   return 0;
 }
