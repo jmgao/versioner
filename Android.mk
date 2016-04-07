@@ -7,7 +7,8 @@ LOCAL_MODULE_HOST_OS := linux
 
 LOCAL_CLANG := true
 LOCAL_RTTI_FLAG := -fno-rtti
-LOCAL_CFLAGS := -D__STDC_CONSTANT_MACROS -D__STDC_LIMIT_MACROS -fno-rtti -Wno-unused-parameter
+LOCAL_CFLAGS := -Wall -Wextra -Wno-unused-parameter
+LOCAL_CFLAGS += -D__STDC_CONSTANT_MACROS -D__STDC_LIMIT_MACROS -fno-rtti
 LOCAL_CPPFLAGS := $(LOCAL_CFLAGS) -std=c++14
 
 LOCAL_SRC_FILES := unique_decl.cpp
