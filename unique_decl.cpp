@@ -30,6 +30,18 @@ using namespace clang;
 using namespace clang::driver;
 using namespace clang::tooling;
 
+static const std::string& get_working_dir() {
+  static std::string cwd;
+  if (cwd.length() == 0) {
+    char buf[PATH_MAX];
+    if (!getcwd(buf, sizeof(buf))) {
+      err(1, "getcwd failed");
+    }
+    cwd = buf;
+  }
+  return cwd;
+}
+
 enum class Availability {
   unknown,
   available,
@@ -231,8 +243,7 @@ static std::vector<std::string> collect_files(const char* directory) {
 
 static void compile_headers(SymbolDatabase& database, const char* header_directory,
                             const char* dep_directory) {
-  std::string cwd(PATH_MAX, '\0');
-  getcwd(&cwd[0], PATH_MAX);
+  std::string cwd = get_working_dir();
   std::vector<std::string> headers = collect_files(header_directory);
 
   std::vector<std::string> dependencies = { header_directory };
