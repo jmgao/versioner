@@ -178,6 +178,8 @@ class HeaderCompilationDatabase : public CompilationDatabase {
     }
     command.push_back("-DANDROID");
     command.push_back("-D_FORTIFY_SOURCE=2");
+    command.push_back("-D_GNU_SOURCE");
+    command.push_back("-Wno-unknown-attributes");
     command.push_back("-target");
     command.push_back("arm-linux-androideabi");
     return CompileCommand(cwd, filename, command);
