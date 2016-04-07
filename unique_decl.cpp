@@ -91,7 +91,9 @@ struct SymbolDatabase {
       assert(inserted);
     }
 
-    SymbolLocation location = {.filename = std::move(filename), .lineNumber = lineNumber };
+    SymbolLocation location = {
+      .type = symbolType, .filename = std::move(filename), .lineNumber = lineNumber
+    };
     it->second.locations.insert(location);
   }
 
