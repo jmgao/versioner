@@ -97,8 +97,19 @@ struct SymbolDatabase {
 
   void dump(std::ostream& out = std::cout) const {
     out << "SymbolDatabase contains " << symbols.size() << " symbols:\n";
+    std::vector<const Symbol*> multiply_defined;
     for (const auto& pair : symbols) {
       pair.second.dump(out);
+      if (pair.second.locations.size() > 1) {
+        multiply_defined.push_back(&pair.second);
+      }
+    }
+
+    if (multiply_defined.size() > 0) {
+      out << "\nMultiply defined symbols:\n";
+      for (const Symbol* symbol : multiply_defined) {
+        symbol->dump(out);
+      }
     }
   }
 };
