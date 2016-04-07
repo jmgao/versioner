@@ -148,9 +148,9 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
       return true;
     }
 
-    auto location = decl->getLocation();
-    StringRef filename = src_manager.getFilename(location);
-    unsigned lineNumber = src_manager.getSpellingLineNumber(location);
+    auto location = src_manager.getPresumedLoc(decl->getLocation());
+    StringRef filename = location.getFilename();
+    unsigned lineNumber = location.getLine();
 
     // TODO: Mangle the symbol name.
     database.registerSymbol(namedDecl->getDeclName().getAsString(), symbolType, std::move(filename),
