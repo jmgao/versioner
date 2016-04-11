@@ -192,6 +192,7 @@ class HeaderCompilationDatabase : public CompilationDatabase {
       command.push_back(dir);
     }
     command.push_back("-DANDROID");
+    command.push_back("-D__ANDROID_API__=24");
     command.push_back("-D_FORTIFY_SOURCE=2");
     command.push_back("-D_GNU_SOURCE");
     command.push_back("-Wno-unknown-attributes");
