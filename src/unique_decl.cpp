@@ -55,6 +55,7 @@ static llvm::cl::OptionCategory VersionerCategory("versioner");
 enum class SymbolType {
   function,
   variable,
+  inconsistent,
 };
 
 struct SymbolLocation {
@@ -79,6 +80,16 @@ struct Symbol {
   std::string name;
   std::unordered_map<APILevel, Availability> availability;
   std::set<SymbolLocation> locations;
+
+  SymbolType type() const {
+    SymbolType result = locations.begin()->type;
+    for (const SymbolLocation& location : locations) {
+      if (location.type != result) {
+        result = SymbolType::inconsistent;
+      }
+    }
+    return result;
+  }
 
   void dump(std::ostream& out) const {
     out << "\t" << name << " declared in " << locations.size() << " locations:\n";
