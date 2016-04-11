@@ -92,10 +92,11 @@ struct Symbol {
   }
 
   void dump(std::ostream& out) const {
-    out << "\t" << name << " declared in " << locations.size() << " locations:\n";
+    out << "    " << name << " declared in " << locations.size() << " locations:\n";
     for (auto location : locations) {
       const char* var_type = (location.type == SymbolType::function) ? "function" : "variable";
-      out << "\t\t" << var_type << " @ " << location.filename << ":" << location.lineNumber << "\n";
+      out << "        " << var_type << " @ " << location.filename << ":" << location.lineNumber
+          << "\n";
     }
   }
 };
