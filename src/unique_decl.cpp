@@ -122,19 +122,8 @@ struct SymbolDatabase {
 
   void dump(std::ostream& out = std::cout) const {
     out << "SymbolDatabase contains " << symbols.size() << " symbols:\n";
-    std::vector<const Symbol*> multiply_defined;
     for (const auto& pair : symbols) {
       pair.second.dump(out);
-      if (pair.second.locations.size() > 1) {
-        multiply_defined.push_back(&pair.second);
-      }
-    }
-
-    if (multiply_defined.size() > 0) {
-      out << "\nMultiply defined symbols:\n";
-      for (const Symbol* symbol : multiply_defined) {
-        symbol->dump(out);
-      }
     }
   }
 };
@@ -283,15 +272,101 @@ static void compile_headers(SymbolDatabase& database, const char* header_directo
   }
 }
 
+void usage() {
+  printf("usage: unique_decl [-d/-m/-f/-v] <header directory> <header dependency directory>\n");
+  exit(1);
+}
+
 int main(int argc, const char** argv) {
   SymbolDatabase symbolDatabase;
 
-  if (argc != 3) {
-    printf("usage: unique_decl [header directory] [header dependency directory]\n");
-    return 1;
+  bool dump_symbols = false;
+  bool dump_multiply_defined = false;
+  bool list_functions = false;
+  bool list_variables = false;
+  if (argc < 3 || argc > 4) {
+    usage();
+  } else if (argc == 4) {
+    if (strcmp("-d", argv[1]) == 0) {
+      dump_symbols = true;
+    } else if (strcmp("-m", argv[1]) == 0) {
+      dump_multiply_defined = true;
+    } else if (strcmp("-f", argv[1]) == 0) {
+      list_functions = true;
+    } else if (strcmp("-v", argv[1]) == 0) {
+      list_variables = true;
+    } else {
+      usage();
+    }
+
+    ++argv;
+  } else {
+    dump_symbols = true;
+    dump_multiply_defined = true;
   }
 
   compile_headers(symbolDatabase, argv[1], argv[2]);
-  symbolDatabase.dump();
+
+  if (dump_symbols || list_functions || list_variables) {
+    std::set<std::string> functions;
+    std::set<std::string> variables;
+    for (const auto& pair : symbolDatabase.symbols) {
+      switch (pair.second.type()) {
+        case SymbolType::function:
+          functions.insert(pair.first);
+          break;
+
+        case SymbolType::variable:
+          variables.insert(pair.first);
+          break;
+
+        case SymbolType::inconsistent:
+          fprintf(stderr, "ERROR: inconsistent symbol type for %s", pair.first.c_str());
+          exit(1);
+      }
+    }
+
+    if (dump_symbols) {
+      printf("Functions:\n");
+      for (const std::string& function : functions) {
+        symbolDatabase.symbols[function].dump(std::cout);
+      }
+
+      printf("\nVariables:\n");
+      for (const std::string& variable : variables) {
+        symbolDatabase.symbols[variable].dump(std::cout);
+      }
+      if (dump_multiply_defined) {
+        printf("\n");
+      }
+    } else if (list_functions) {
+      for (const std::string& function : functions) {
+        printf("%s\n", function.c_str());
+      }
+    } else if (list_variables) {
+      for (const std::string& variable : variables) {
+        printf("%s\n", variable.c_str());
+      }
+    }
+  }
+
+  if (dump_multiply_defined) {
+    std::vector<const Symbol*> multiply_defined;
+    for (const auto& pair : symbolDatabase.symbols) {
+      if (pair.second.locations.size() > 1) {
+        multiply_defined.push_back(&pair.second);
+      }
+    }
+
+    if (multiply_defined.size() > 0) {
+      printf("Multiply defined symbols:\n");
+      for (const Symbol* symbol : multiply_defined) {
+        symbol->dump(std::cout);
+      }
+    } else {
+      printf("No multiply defined symbols.\n");
+    }
+  }
+
   return 0;
 }
