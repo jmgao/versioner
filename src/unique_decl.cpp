@@ -275,39 +275,52 @@ static void compile_headers(SymbolDatabase& database, const char* header_directo
 }
 
 void usage() {
-  printf("usage: unique_decl [-d/-m/-f/-v] <header directory> <header dependency directory>\n");
+  printf("usage: unique_decl [-d/-m/-f/-v] <header directory> [<header dependency directory>]\n");
   exit(1);
 }
 
-int main(int argc, const char** argv) {
+int main(int argc, char** argv) {
   SymbolDatabase symbolDatabase;
 
-  bool dump_symbols = false;
-  bool dump_multiply_defined = false;
+  bool default_args = true;
+  bool dump_symbols = true;
+  bool dump_multiply_defined = true;
   bool list_functions = false;
   bool list_variables = false;
-  if (argc < 3 || argc > 4) {
-    usage();
-  } else if (argc == 4) {
-    if (strcmp("-d", argv[1]) == 0) {
-      dump_symbols = true;
-    } else if (strcmp("-m", argv[1]) == 0) {
-      dump_multiply_defined = true;
-    } else if (strcmp("-f", argv[1]) == 0) {
-      list_functions = true;
-    } else if (strcmp("-v", argv[1]) == 0) {
-      list_variables = true;
-    } else {
-      usage();
-    }
 
-    ++argv;
-  } else {
+  int c;
+  while ((c = getopt(argc, argv, "dmfv")) != -1) {
+    default_args = false;
+    switch (c) {
+      case 'd':
+        dump_symbols = true;
+        break;
+      case 'm':
+        dump_multiply_defined = true;
+        break;
+      case 'f':
+        list_functions = true;
+        break;
+      case 'v':
+        list_variables = true;
+        break;
+      default:
+        usage();
+        break;
+    }
+  }
+
+  if (default_args) {
     dump_symbols = true;
     dump_multiply_defined = true;
   }
 
-  compile_headers(symbolDatabase, argv[1], argv[2]);
+  if (argc - optind > 2 || optind >= argc) {
+    usage();
+  }
+
+  const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
+  compile_headers(symbolDatabase, argv[optind], dependencies);
 
   if (dump_symbols || list_functions || list_variables) {
     std::set<std::string> functions;
