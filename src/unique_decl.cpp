@@ -17,6 +17,7 @@
 
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
+#include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/ASTConsumers.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -131,9 +132,22 @@ struct SymbolDatabase {
 
 class Visitor : public clang::RecursiveASTVisitor<Visitor> {
   SymbolDatabase& database;
+  std::unique_ptr<MangleContext> mangler;
 
  public:
-  Visitor(SymbolDatabase& database) : database(database) {
+  Visitor(SymbolDatabase& database, ASTContext& ctx) : database(database) {
+    mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
+  }
+
+  std::string mangle_decl(NamedDecl* decl) {
+    if (mangler->shouldMangleDeclName(decl)) {
+      std::string mangled;
+      llvm::raw_string_ostream ss(mangled);
+      mangler->mangleName(decl, ss);
+      return mangled;
+    }
+
+    return decl->getIdentifier()->getName();
   }
 
   bool VisitDecl(Decl* decl) {
@@ -144,8 +158,8 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
     ASTContext& ctx = decl->getASTContext();
     SourceManager& src_manager = ctx.getSourceManager();
 
-    auto namedDecl = dyn_cast<NamedDecl>(decl);
-    if (!namedDecl) {
+    auto named_decl = dyn_cast<NamedDecl>(decl);
+    if (!named_decl) {
       return true;
     }
 
@@ -167,9 +181,7 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
     StringRef filename = location.getFilename();
     unsigned lineNumber = location.getLine();
 
-    // TODO: Mangle the symbol name.
-    database.registerSymbol(namedDecl->getDeclName().getAsString(), symbolType, std::move(filename),
-                            lineNumber);
+    database.registerSymbol(mangle_decl(named_decl), symbolType, std::move(filename), lineNumber);
     return true;
   }
 };
@@ -265,12 +277,13 @@ static void compile_headers(SymbolDatabase& database, const char* header_directo
 
   HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies);
   ClangTool tool(compilationDatabase, headers);
-  Visitor visitor(database);
 
   std::vector<std::unique_ptr<ASTUnit>> asts;
   tool.buildASTs(asts);
   for (const auto& ast : asts) {
-    visitor.TraverseDecl(ast->getASTContext().getTranslationUnitDecl());
+    ASTContext& ctx = ast->getASTContext();
+    Visitor visitor(database, ctx);
+    visitor.TraverseDecl(ctx.getTranslationUnitDecl());
   }
 }
 
