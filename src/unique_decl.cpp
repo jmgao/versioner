@@ -27,6 +27,8 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "android-base/stringprintf.h"
+
 using namespace clang;
 using namespace clang::driver;
 using namespace clang::tooling;
@@ -190,11 +192,15 @@ class HeaderCompilationDatabase : public CompilationDatabase {
   std::string cwd;
   std::vector<std::string> headers;
   std::vector<std::string> include_dirs;
+  int api_level;
 
  public:
   HeaderCompilationDatabase(std::string cwd, std::vector<std::string> headers,
-                            std::vector<std::string> include_dirs)
-      : cwd(std::move(cwd)), headers(std::move(headers)), include_dirs(std::move(include_dirs)){
+                            std::vector<std::string> include_dirs, int api_level)
+      : cwd(std::move(cwd)),
+        headers(std::move(headers)),
+        include_dirs(std::move(include_dirs)),
+        api_level(api_level) {
   }
 
   CompileCommand generateCompileCommand(const std::string& filename) const {
@@ -204,7 +210,7 @@ class HeaderCompilationDatabase : public CompilationDatabase {
       command.push_back(dir);
     }
     command.push_back("-DANDROID");
-    command.push_back("-D__ANDROID_API__=24");
+    command.push_back(android::base::StringPrintf("-D__ANDROID_API__=%d", api_level));
     command.push_back("-D_FORTIFY_SOURCE=2");
     command.push_back("-D_GNU_SOURCE");
     command.push_back("-Wno-unknown-attributes");
@@ -256,7 +262,7 @@ static std::vector<std::string> collect_files(const char* directory) {
 }
 
 static void compile_headers(SymbolDatabase& database, const char* header_directory,
-                            const char* dep_directory) {
+                            const char* dep_directory, int api_level) {
   std::string cwd = get_working_dir();
   std::vector<std::string> headers = collect_files(header_directory);
 
@@ -275,7 +281,7 @@ static void compile_headers(SymbolDatabase& database, const char* header_directo
     closedir(deps);
   }
 
-  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies);
+  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies, api_level);
   ClangTool tool(compilationDatabase, headers);
 
   std::vector<std::unique_ptr<ASTUnit>> asts;
@@ -295,6 +301,7 @@ void usage() {
 int main(int argc, char** argv) {
   SymbolDatabase symbolDatabase;
 
+  int api_level = 10000;
   bool default_args = true;
   bool dump_symbols = true;
   bool dump_multiply_defined = true;
@@ -302,9 +309,16 @@ int main(int argc, char** argv) {
   bool list_variables = false;
 
   int c;
-  while ((c = getopt(argc, argv, "dmfv")) != -1) {
+  while ((c = getopt(argc, argv, "a:dmfv")) != -1) {
     default_args = false;
     switch (c) {
+      case 'a': {
+        char *end;
+        api_level = strtol(optarg, &end, 10);
+        if (end == optarg || strlen(end) > 0) {
+          usage();
+        }
+      }
       case 'd':
         dump_symbols = true;
         break;
@@ -333,7 +347,7 @@ int main(int argc, char** argv) {
   }
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
-  compile_headers(symbolDatabase, argv[optind], dependencies);
+  compile_headers(symbolDatabase, argv[optind], dependencies, api_level);
 
   if (dump_symbols || list_functions || list_variables) {
     std::set<std::string> functions;
