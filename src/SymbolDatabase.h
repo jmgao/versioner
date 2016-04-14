@@ -30,11 +30,12 @@ struct SymbolLocation {
   unsigned line_number;
   unsigned column;
   SymbolType type;
+  bool is_extern;
   bool is_definition;
   mutable std::set<int> api_levels;
 
   auto tie() const {
-    return std::tie(filename, line_number, column, type, is_definition);
+    return std::tie(filename, line_number, column, type, is_extern, is_definition);
   }
 
   bool operator<(const SymbolLocation& other) const {
@@ -80,9 +81,11 @@ struct Symbol {
     for (const SymbolLocation& location : locations) {
       const char* var_type = symbolTypeName(location.type);
       const char* declaration_type = location.is_definition ? "definition" : "declaration";
-      std::string api_levels = android::base::Join(location.api_levels, ", ");
-      out << "        " << var_type << " " << declaration_type << " @ " << location.filename << ":"
-          << location.line_number << ":" << location.column << " [" << api_levels << "]\n";
+      const char* linkage = location.is_extern ? "extern" : "static";
+      std::string api_levels = android::base::Join(location.api_levels, ",");
+      out << "        " << linkage << " " << var_type << " " << declaration_type << " @ "
+          << location.filename << ":" << location.line_number << ":" << location.column << " ["
+          << api_levels << "]\n";
     }
   }
 
