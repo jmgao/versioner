@@ -22,7 +22,7 @@
 
 using namespace clang::tooling;
 
-static const std::string& get_working_dir() {
+static const std::string& getWorkingDir() {
   static std::string cwd;
   if (cwd.length() == 0) {
     char buf[PATH_MAX];
@@ -87,7 +87,7 @@ class HeaderCompilationDatabase : public CompilationDatabase {
   }
 };
 
-static std::vector<std::string> collect_files(const char* directory) {
+static std::vector<std::string> collectFiles(const char* directory) {
   std::vector<std::string> files;
 
   char* dir_argv[2] = { const_cast<char*>(directory), nullptr };
@@ -110,10 +110,10 @@ static std::vector<std::string> collect_files(const char* directory) {
   return files;
 }
 
-static void compile_headers(SymbolDatabase& database, const char* header_directory,
+static void compileHeaders(SymbolDatabase& database, const char* header_directory,
                             const char* dep_directory, int api_level) {
-  std::string cwd = get_working_dir();
-  std::vector<std::string> headers = collect_files(header_directory);
+  std::string cwd = getWorkingDir();
+  std::vector<std::string> headers = collectFiles(header_directory);
 
   std::vector<std::string> dependencies = { header_directory };
   if (dep_directory) {
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
   }
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
-  compile_headers(symbolDatabase, argv[optind], dependencies, api_level);
+  compileHeaders(symbolDatabase, argv[optind], dependencies, api_level);
 
   if (dump_symbols || list_functions || list_variables) {
     std::set<std::string> functions;
