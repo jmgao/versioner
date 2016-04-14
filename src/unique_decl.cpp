@@ -148,7 +148,7 @@ void usage() {
 int main(int argc, char** argv) {
   SymbolDatabase symbolDatabase;
 
-  int api_level = 10000;
+  std::vector<int> api_levels;
   bool default_args = true;
   bool dump_symbols = false;
   bool dump_multiply_declared = false;
@@ -161,10 +161,11 @@ int main(int argc, char** argv) {
     switch (c) {
       case 'a': {
         char *end;
-        api_level = strtol(optarg, &end, 10);
+        int api_level = strtol(optarg, &end, 10);
         if (end == optarg || strlen(end) > 0) {
           usage();
         }
+        api_levels.push_back(api_level);
         break;
       }
       case 'd':
@@ -194,8 +195,14 @@ int main(int argc, char** argv) {
     usage();
   }
 
+  if (api_levels.empty()) {
+    api_levels.push_back(10000);
+  }
+
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
-  compileHeaders(symbolDatabase, argv[optind], dependencies, api_level);
+  for (int api_level : api_levels) {
+    compileHeaders(symbolDatabase, argv[optind], dependencies, api_level);
+  }
 
   if (dump_symbols || list_functions || list_variables) {
     std::set<std::string> functions;
@@ -247,8 +254,11 @@ int main(int argc, char** argv) {
   if (dump_multiply_declared) {
     std::vector<const Symbol*> multiply_declared;
     for (const auto& pair : symbolDatabase.symbols) {
-      if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
-        multiply_declared.push_back(&pair.second);
+      for (int api_level : api_levels) {
+        if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
+          multiply_declared.push_back(&pair.second);
+          break;
+        }
       }
     }
 
