@@ -64,10 +64,10 @@ enum class SymbolType {
 struct SymbolLocation {
   SymbolType type;
   std::string filename;
-  unsigned lineNumber;
+  unsigned line_number;
 
   auto tie() const {
-    return std::tie(filename, lineNumber);
+    return std::tie(filename, line_number);
   }
 
   bool operator<(const SymbolLocation& other) const {
@@ -98,7 +98,7 @@ struct Symbol {
     out << "    " << name << " declared in " << locations.size() << " locations:\n";
     for (auto location : locations) {
       const char* var_type = (location.type == SymbolType::function) ? "function" : "variable";
-      out << "        " << var_type << " @ " << location.filename << ":" << location.lineNumber
+      out << "        " << var_type << " @ " << location.filename << ":" << location.line_number
           << "\n";
     }
   }
@@ -107,19 +107,19 @@ struct Symbol {
 struct SymbolDatabase {
   std::unordered_map<std::string, Symbol> symbols;
 
-  void registerSymbol(const std::string& symbolName, SymbolType symbolType, std::string filename,
-                      unsigned lineNumber) {
-    auto it = symbols.find(symbolName);
+  void registerSymbol(const std::string& symbol_name, SymbolType symbol_type, std::string filename,
+                      unsigned line_number) {
+    auto it = symbols.find(symbol_name);
 
     if (it == symbols.end()) {
-      Symbol symbol = {.name = symbolName };
+      Symbol symbol = {.name = symbol_name };
       bool inserted;
-      std::tie(it, inserted) = symbols.insert(decltype(symbols)::value_type(symbolName, symbol));
+      std::tie(it, inserted) = symbols.insert(decltype(symbols)::value_type(symbol_name, symbol));
       assert(inserted);
     }
 
     SymbolLocation location = {
-      .type = symbolType, .filename = std::move(filename), .lineNumber = lineNumber
+      .type = symbol_type, .filename = std::move(filename), .line_number = line_number
     };
     it->second.locations.insert(location);
   }
@@ -165,13 +165,13 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
       return true;
     }
 
-    SymbolType symbolType;
+    SymbolType symbol_type;
     FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
     VarDecl* var_decl = dyn_cast<VarDecl>(decl);
     if (function_decl) {
-      symbolType = SymbolType::function;
+      symbol_type = SymbolType::function;
     } else if (var_decl) {
-      symbolType = SymbolType::variable;
+      symbol_type = SymbolType::variable;
       if (!var_decl->hasExternalStorage()) {
         return true;
       }
@@ -181,9 +181,9 @@ class Visitor : public clang::RecursiveASTVisitor<Visitor> {
 
     auto location = src_manager.getPresumedLoc(decl->getLocation());
     StringRef filename = location.getFilename();
-    unsigned lineNumber = location.getLine();
+    unsigned line_number = location.getLine();
 
-    database.registerSymbol(mangle_decl(named_decl), symbolType, std::move(filename), lineNumber);
+    database.registerSymbol(mangle_decl(named_decl), symbol_type, std::move(filename), line_number);
     return true;
   }
 };
@@ -303,8 +303,8 @@ int main(int argc, char** argv) {
 
   int api_level = 10000;
   bool default_args = true;
-  bool dump_symbols = true;
-  bool dump_multiply_defined = true;
+  bool dump_symbols = false;
+  bool dump_multiply_defined = false;
   bool list_functions = false;
   bool list_variables = false;
 
@@ -318,6 +318,7 @@ int main(int argc, char** argv) {
         if (end == optarg || strlen(end) > 0) {
           usage();
         }
+        break;
       }
       case 'd':
         dump_symbols = true;
@@ -381,13 +382,16 @@ int main(int argc, char** argv) {
       if (dump_multiply_defined) {
         printf("\n");
       }
-    } else if (list_functions) {
-      for (const std::string& function : functions) {
-        printf("%s\n", function.c_str());
+    } else {
+      if (list_functions) {
+        for (const std::string& function : functions) {
+          printf("%s\n", function.c_str());
+        }
       }
-    } else if (list_variables) {
-      for (const std::string& variable : variables) {
-        printf("%s\n", variable.c_str());
+      if (list_variables) {
+        for (const std::string& variable : variables) {
+          printf("%s\n", variable.c_str());
+        }
       }
     }
   }
