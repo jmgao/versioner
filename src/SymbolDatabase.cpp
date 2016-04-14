@@ -20,8 +20,7 @@ static void registerSymbol(SymbolDatabase& database, const std::string& symbol_n
   if (it == database.symbols.end()) {
     Symbol symbol = {.name = symbol_name };
     bool inserted;
-    std::tie(it, inserted) =
-      database.symbols.insert(decltype(database.symbols)::value_type(symbol_name, symbol));
+    std::tie(it, inserted) = database.symbols.insert({ symbol_name, symbol });
     assert(inserted);
   }
 
