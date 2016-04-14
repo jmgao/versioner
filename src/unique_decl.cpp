@@ -15,22 +15,11 @@
 #include <unordered_map>
 #include <vector>
 
-#include "clang/AST/AST.h"
-#include "clang/AST/ASTConsumer.h"
-#include "clang/AST/Mangle.h"
-#include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Frontend/ASTConsumers.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/FrontendActions.h"
-#include "clang/Rewrite/Core/Rewriter.h"
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "clang/Tooling/Tooling.h"
-#include "llvm/Support/raw_ostream.h"
-
 #include "android-base/stringprintf.h"
+#include "clang/Tooling/Tooling.h"
 
-using namespace clang;
-using namespace clang::driver;
+#include "SymbolDatabase.h"
+
 using namespace clang::tooling;
 
 static const std::string& get_working_dir() {
@@ -45,148 +34,8 @@ static const std::string& get_working_dir() {
   return cwd;
 }
 
-enum class Availability {
-  unknown,
-  available,
-  unavailable,
-};
-
-typedef int APILevel;
-
 static llvm::cl::OptionCategory VersionerCategory("versioner");
 
-enum class SymbolType {
-  function,
-  variable,
-  inconsistent,
-};
-
-struct SymbolLocation {
-  SymbolType type;
-  std::string filename;
-  unsigned line_number;
-
-  auto tie() const {
-    return std::tie(filename, line_number);
-  }
-
-  bool operator<(const SymbolLocation& other) const {
-    return tie() < other.tie();
-  }
-
-  bool operator==(const SymbolLocation& other) const {
-    return tie() == other.tie();
-  }
-};
-
-struct Symbol {
-  std::string name;
-  std::unordered_map<APILevel, Availability> availability;
-  std::set<SymbolLocation> locations;
-
-  SymbolType type() const {
-    SymbolType result = locations.begin()->type;
-    for (const SymbolLocation& location : locations) {
-      if (location.type != result) {
-        result = SymbolType::inconsistent;
-      }
-    }
-    return result;
-  }
-
-  void dump(std::ostream& out) const {
-    out << "    " << name << " declared in " << locations.size() << " locations:\n";
-    for (auto location : locations) {
-      const char* var_type = (location.type == SymbolType::function) ? "function" : "variable";
-      out << "        " << var_type << " @ " << location.filename << ":" << location.line_number
-          << "\n";
-    }
-  }
-};
-
-struct SymbolDatabase {
-  std::unordered_map<std::string, Symbol> symbols;
-
-  void registerSymbol(const std::string& symbol_name, SymbolType symbol_type, std::string filename,
-                      unsigned line_number) {
-    auto it = symbols.find(symbol_name);
-
-    if (it == symbols.end()) {
-      Symbol symbol = {.name = symbol_name };
-      bool inserted;
-      std::tie(it, inserted) = symbols.insert(decltype(symbols)::value_type(symbol_name, symbol));
-      assert(inserted);
-    }
-
-    SymbolLocation location = {
-      .type = symbol_type, .filename = std::move(filename), .line_number = line_number
-    };
-    it->second.locations.insert(location);
-  }
-
-  void dump(std::ostream& out = std::cout) const {
-    out << "SymbolDatabase contains " << symbols.size() << " symbols:\n";
-    for (const auto& pair : symbols) {
-      pair.second.dump(out);
-    }
-  }
-};
-
-class Visitor : public clang::RecursiveASTVisitor<Visitor> {
-  SymbolDatabase& database;
-  std::unique_ptr<MangleContext> mangler;
-
- public:
-  Visitor(SymbolDatabase& database, ASTContext& ctx) : database(database) {
-    mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
-  }
-
-  std::string mangle_decl(NamedDecl* decl) {
-    if (mangler->shouldMangleDeclName(decl)) {
-      std::string mangled;
-      llvm::raw_string_ostream ss(mangled);
-      mangler->mangleName(decl, ss);
-      return mangled;
-    }
-
-    return decl->getIdentifier()->getName();
-  }
-
-  bool VisitDecl(Decl* decl) {
-    if (decl->getParentFunctionOrMethod()) {
-      return true;
-    }
-
-    ASTContext& ctx = decl->getASTContext();
-    SourceManager& src_manager = ctx.getSourceManager();
-
-    auto named_decl = dyn_cast<NamedDecl>(decl);
-    if (!named_decl) {
-      return true;
-    }
-
-    SymbolType symbol_type;
-    FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
-    VarDecl* var_decl = dyn_cast<VarDecl>(decl);
-    if (function_decl) {
-      symbol_type = SymbolType::function;
-    } else if (var_decl) {
-      symbol_type = SymbolType::variable;
-      if (!var_decl->hasExternalStorage()) {
-        return true;
-      }
-    } else {
-      return true;
-    }
-
-    auto location = src_manager.getPresumedLoc(decl->getLocation());
-    StringRef filename = location.getFilename();
-    unsigned line_number = location.getLine();
-
-    database.registerSymbol(mangle_decl(named_decl), symbol_type, std::move(filename), line_number);
-    return true;
-  }
-};
 
 class HeaderCompilationDatabase : public CompilationDatabase {
   std::string cwd;
@@ -284,12 +133,10 @@ static void compile_headers(SymbolDatabase& database, const char* header_directo
   HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies, api_level);
   ClangTool tool(compilationDatabase, headers);
 
-  std::vector<std::unique_ptr<ASTUnit>> asts;
+  std::vector<std::unique_ptr<clang::ASTUnit>> asts;
   tool.buildASTs(asts);
   for (const auto& ast : asts) {
-    ASTContext& ctx = ast->getASTContext();
-    Visitor visitor(database, ctx);
-    visitor.TraverseDecl(ctx.getTranslationUnitDecl());
+    database.parseAST(ast.get());
   }
 }
 
