@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
   int api_level = 10000;
   bool default_args = true;
   bool dump_symbols = false;
-  bool dump_multiply_defined = false;
+  bool dump_multiply_declared = false;
   bool list_functions = false;
   bool list_variables = false;
 
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
         dump_symbols = true;
         break;
       case 'm':
-        dump_multiply_defined = true;
+        dump_multiply_declared = true;
         break;
       case 'f':
         list_functions = true;
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
 
   if (default_args) {
     dump_symbols = true;
-    dump_multiply_defined = true;
+    dump_multiply_declared = true;
   }
 
   if (argc - optind > 2 || optind >= argc) {
@@ -212,6 +212,7 @@ int main(int argc, char** argv) {
 
         case SymbolType::inconsistent:
           fprintf(stderr, "ERROR: inconsistent symbol type for %s", pair.first.c_str());
+          pair.second.dump();
           exit(1);
       }
     }
@@ -226,7 +227,7 @@ int main(int argc, char** argv) {
       for (const std::string& variable : variables) {
         symbolDatabase.symbols[variable].dump(std::cout);
       }
-      if (dump_multiply_defined) {
+      if (dump_multiply_declared) {
         printf("\n");
       }
     } else {
@@ -243,21 +244,21 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (dump_multiply_defined) {
-    std::vector<const Symbol*> multiply_defined;
+  if (dump_multiply_declared) {
+    std::vector<const Symbol*> multiply_declared;
     for (const auto& pair : symbolDatabase.symbols) {
-      if (pair.second.locations.size() > 1) {
-        multiply_defined.push_back(&pair.second);
+      if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
+        multiply_declared.push_back(&pair.second);
       }
     }
 
-    if (multiply_defined.size() > 0) {
-      printf("Multiply defined symbols:\n");
-      for (const Symbol* symbol : multiply_defined) {
-        symbol->dump(std::cout);
+    if (multiply_declared.size() > 0) {
+      printf("Multiply declared symbols:\n");
+      for (const Symbol* symbol : multiply_declared) {
+        symbol->dump();
       }
     } else {
-      printf("No multiply defined symbols.\n");
+      printf("No multiply declared symbols.\n");
     }
   }
 

@@ -14,7 +14,8 @@
 using namespace clang;
 
 static void registerSymbol(SymbolDatabase& database, const std::string& symbol_name,
-                           SymbolType symbol_type, PresumedLoc presumed_loc, int api_level) {
+                           SymbolType symbol_type, bool is_definition, PresumedLoc presumed_loc,
+                           int api_level) {
   auto it = database.symbols.find(symbol_name);
 
   if (it == database.symbols.end()) {
@@ -31,6 +32,7 @@ static void registerSymbol(SymbolDatabase& database, const std::string& symbol_n
     .line_number = presumed_loc.getLine(),
     .column = presumed_loc.getColumn(),
     .type = symbol_type,
+    .is_definition = is_definition,
   };
   auto location_it = locations.insert(locations.begin(), location);
   location_it->addAPI(api_level);
@@ -74,19 +76,36 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     SymbolType symbol_type;
     FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
     VarDecl* var_decl = dyn_cast<VarDecl>(decl);
+    bool is_definition = false;
     if (function_decl) {
       symbol_type = SymbolType::function;
+      is_definition = function_decl->isThisDeclarationADefinition();
     } else if (var_decl) {
-      symbol_type = SymbolType::variable;
-      if (!var_decl->hasExternalStorage()) {
+      if (!var_decl->isFileVarDecl()) {
         return true;
+      }
+
+      symbol_type = SymbolType::variable;
+      switch (var_decl->isThisDeclarationADefinition()) {
+        case VarDecl::DeclarationOnly:
+          is_definition = false;
+          break;
+
+        case VarDecl::TentativeDefinition:
+        // Assume that tenative definitions are always definitions.
+        // If this isn't true, we can always hoist the actual definition out into its own header
+        // to avoid a false positive.
+        case VarDecl::Definition:
+          is_definition = true;
+          break;
       }
     } else {
       return true;
     }
 
     auto location = src_manager.getPresumedLoc(decl->getLocation());
-    registerSymbol(database, mangleDecl(named_decl), symbol_type, location, api_level);
+    registerSymbol(database, mangleDecl(named_decl), symbol_type, is_definition, location,
+                   api_level);
     return true;
   }
 };
