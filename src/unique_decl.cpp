@@ -136,7 +136,7 @@ static void compileHeaders(SymbolDatabase& database, const char* header_director
   std::vector<std::unique_ptr<clang::ASTUnit>> asts;
   tool.buildASTs(asts);
   for (const auto& ast : asts) {
-    database.parseAST(ast.get());
+    database.parseAST(ast.get(), api_level);
   }
 }
 

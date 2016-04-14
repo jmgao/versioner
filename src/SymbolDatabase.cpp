@@ -14,7 +14,7 @@
 using namespace clang;
 
 static void registerSymbol(SymbolDatabase& database, const std::string& symbol_name,
-                           SymbolType symbol_type, std::string filename, unsigned line_number) {
+                           SymbolType symbol_type, PresumedLoc presumed_loc, int api_level) {
   auto it = database.symbols.find(symbol_name);
 
   if (it == database.symbols.end()) {
@@ -25,18 +25,26 @@ static void registerSymbol(SymbolDatabase& database, const std::string& symbol_n
     assert(inserted);
   }
 
+  auto& locations = it->second.locations;
+
   SymbolLocation location = {
-    .type = symbol_type, .filename = std::move(filename), .line_number = line_number
+    .filename = presumed_loc.getFilename(),
+    .line_number = presumed_loc.getLine(),
+    .column = presumed_loc.getColumn(),
+    .type = symbol_type,
   };
-  it->second.locations.insert(location);
+  auto location_it = locations.insert(locations.begin(), location);
+  location_it->addAPI(api_level);
 }
 
 class Visitor : public RecursiveASTVisitor<Visitor> {
   SymbolDatabase& database;
   std::unique_ptr<MangleContext> mangler;
+  int api_level;
 
  public:
-  Visitor(SymbolDatabase& database, ASTContext& ctx) : database(database) {
+  Visitor(SymbolDatabase& database, ASTContext& ctx, int api_level)
+      : database(database), api_level(api_level) {
     mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
   }
 
@@ -79,16 +87,13 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     }
 
     auto location = src_manager.getPresumedLoc(decl->getLocation());
-    StringRef filename = location.getFilename();
-    unsigned line_number = location.getLine();
-
-    registerSymbol(database, mangleDecl(named_decl), symbol_type, std::move(filename), line_number);
+    registerSymbol(database, mangleDecl(named_decl), symbol_type, location, api_level);
     return true;
   }
 };
 
-void SymbolDatabase::parseAST(ASTUnit* ast) {
+void SymbolDatabase::parseAST(ASTUnit* ast, int api_level) {
   ASTContext& ctx = ast->getASTContext();
-  Visitor visitor(*this, ctx);
+  Visitor visitor(*this, ctx, api_level);
   visitor.TraverseDecl(ctx.getTranslationUnitDecl());
 }

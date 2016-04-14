@@ -4,6 +4,9 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#include "android-base/strings.h"
 
 enum class SymbolType {
   function,
@@ -12,12 +15,14 @@ enum class SymbolType {
 };
 
 struct SymbolLocation {
-  SymbolType type;
   std::string filename;
   unsigned line_number;
+  unsigned column;
+  SymbolType type;
+  mutable std::set<int> api_levels;
 
   auto tie() const {
-    return std::tie(filename, line_number);
+    return std::tie(filename, line_number, column, type);
   }
 
   bool operator<(const SymbolLocation& other) const {
@@ -26,6 +31,14 @@ struct SymbolLocation {
 
   bool operator==(const SymbolLocation& other) const {
     return tie() == other.tie();
+  }
+
+  void addAPI(int api_level) const {
+    api_levels.insert(api_level);
+  }
+
+  bool matchesAPI(int api_level) const {
+    return api_levels.find(api_level) != api_levels.end();
   }
 };
 
@@ -43,12 +56,13 @@ struct Symbol {
     return result;
   }
 
-  void dump(std::ostream& out) const {
+  void dump(std::ostream& out = std::cout) const {
     out << "    " << name << " declared in " << locations.size() << " locations:\n";
-    for (auto location : locations) {
+    for (const SymbolLocation& location : locations) {
       const char* var_type = (location.type == SymbolType::function) ? "function" : "variable";
+      std::string api_levels = android::base::Join(location.api_levels, ", ");
       out << "        " << var_type << " @ " << location.filename << ":" << location.line_number
-          << "\n";
+          << ":" << location.column << " [" << api_levels << "]\n";
     }
   }
 };
@@ -61,7 +75,7 @@ class SymbolDatabase {
  public:
   std::unordered_map<std::string, Symbol> symbols;
 
-  void parseAST(clang::ASTUnit* ast);
+  void parseAST(clang::ASTUnit* ast, int api_level);
 
   void dump(std::ostream& out = std::cout) const {
     out << "SymbolDatabase contains " << symbols.size() << " symbols:\n";
