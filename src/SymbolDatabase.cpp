@@ -13,32 +13,6 @@
 
 using namespace clang;
 
-static void registerSymbol(SymbolDatabase& database, const std::string& symbol_name,
-                           SymbolType symbol_type, bool is_extern, bool is_definition,
-                           PresumedLoc presumed_loc, int api_level) {
-  auto it = database.symbols.find(symbol_name);
-
-  if (it == database.symbols.end()) {
-    Symbol symbol = {.name = symbol_name };
-    bool inserted;
-    std::tie(it, inserted) = database.symbols.insert({ symbol_name, symbol });
-    assert(inserted);
-  }
-
-  auto& locations = it->second.locations;
-
-  SymbolLocation location = {
-    .filename = presumed_loc.getFilename(),
-    .line_number = presumed_loc.getLine(),
-    .column = presumed_loc.getColumn(),
-    .type = symbol_type,
-    .is_extern = is_extern,
-    .is_definition = is_definition,
-  };
-  auto location_it = locations.insert(locations.begin(), location);
-  location_it->addAPI(api_level);
-}
-
 class Visitor : public RecursiveASTVisitor<Visitor> {
   SymbolDatabase& database;
   std::unique_ptr<MangleContext> mangler;
@@ -107,9 +81,30 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       return true;
     }
 
-    auto location = src_manager.getPresumedLoc(decl->getLocation());
-    registerSymbol(database, mangleDecl(named_decl), symbol_type, is_extern, is_definition,
-                   location, api_level);
+    // Find or insert an entry for the symbol.
+    std::string symbol_name = mangleDecl(named_decl);
+    auto symbol_it = database.symbols.find(symbol_name);
+    if (symbol_it == database.symbols.end()) {
+      Symbol symbol = {.name = symbol_name };
+      bool inserted;
+      std::tie(symbol_it, inserted) = database.symbols.insert({ symbol_name, symbol });
+    }
+
+    auto& symbol_locations = symbol_it->second.locations;
+    auto presumed_loc = src_manager.getPresumedLoc(decl->getLocation());
+    SymbolLocation location = {
+      .filename = presumed_loc.getFilename(),
+      .line_number = presumed_loc.getLine(),
+      .column = presumed_loc.getColumn(),
+      .type = symbol_type,
+      .is_extern = is_extern,
+      .is_definition = is_definition,
+    };
+
+    // It's fine if the location is already there, we'll get an iterator to the existing element.
+    auto location_it = symbol_locations.insert(symbol_locations.begin(), location);
+    location_it->addAPI(api_level);
+
     return true;
   }
 };
