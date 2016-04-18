@@ -1,4 +1,4 @@
-#include "SymbolDatabase.h"
+#include "HeaderDatabase.h"
 
 #include <iostream>
 #include <set>
@@ -14,12 +14,12 @@
 using namespace clang;
 
 class Visitor : public RecursiveASTVisitor<Visitor> {
-  SymbolDatabase& database;
+  HeaderDatabase& database;
   std::unique_ptr<MangleContext> mangler;
   int api_level;
 
  public:
-  Visitor(SymbolDatabase& database, ASTContext& ctx, int api_level)
+  Visitor(HeaderDatabase& database, ASTContext& ctx, int api_level)
       : database(database), api_level(api_level) {
     mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
   }
@@ -109,7 +109,7 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
   }
 };
 
-void SymbolDatabase::parseAST(ASTUnit* ast, int api_level) {
+void HeaderDatabase::parseAST(ASTUnit* ast, int api_level) {
   ASTContext& ctx = ast->getASTContext();
   Visitor visitor(*this, ctx, api_level);
   visitor.TraverseDecl(ctx.getTranslationUnitDecl());

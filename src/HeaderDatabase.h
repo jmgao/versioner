@@ -126,14 +126,14 @@ namespace clang {
 class ASTUnit;
 }
 
-class SymbolDatabase {
+class HeaderDatabase {
  public:
   std::unordered_map<std::string, Symbol> symbols;
 
   void parseAST(clang::ASTUnit* ast, int api_level);
 
   void dump(std::ostream& out = std::cout) const {
-    out << "SymbolDatabase contains " << symbols.size() << " symbols:\n";
+    out << "HeaderDatabase contains " << symbols.size() << " symbols:\n";
     for (const auto& pair : symbols) {
       pair.second.dump(out);
     }

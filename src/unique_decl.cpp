@@ -18,7 +18,7 @@
 #include "android-base/stringprintf.h"
 #include "clang/Tooling/Tooling.h"
 
-#include "SymbolDatabase.h"
+#include "HeaderDatabase.h"
 
 using namespace clang::tooling;
 
@@ -110,7 +110,7 @@ static std::vector<std::string> collectFiles(const char* directory) {
   return files;
 }
 
-static void compileHeaders(SymbolDatabase& database, const char* header_directory,
+static void compileHeaders(HeaderDatabase& database, const char* header_directory,
                             const char* dep_directory, int api_level) {
   std::string cwd = getWorkingDir();
   std::vector<std::string> headers = collectFiles(header_directory);
@@ -146,7 +146,7 @@ void usage() {
 }
 
 int main(int argc, char** argv) {
-  SymbolDatabase symbolDatabase;
+  HeaderDatabase headerDatabase;
 
   std::vector<int> api_levels;
   bool default_args = true;
@@ -201,13 +201,13 @@ int main(int argc, char** argv) {
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
   for (int api_level : api_levels) {
-    compileHeaders(symbolDatabase, argv[optind], dependencies, api_level);
+    compileHeaders(headerDatabase, argv[optind], dependencies, api_level);
   }
 
   if (dump_symbols || list_functions || list_variables) {
     std::set<std::string> functions;
     std::set<std::string> variables;
-    for (const auto& pair : symbolDatabase.symbols) {
+    for (const auto& pair : headerDatabase.symbols) {
       switch (pair.second.type()) {
         case SymbolType::function:
           functions.insert(pair.first);
@@ -227,12 +227,12 @@ int main(int argc, char** argv) {
     if (dump_symbols) {
       printf("Functions:\n");
       for (const std::string& function : functions) {
-        symbolDatabase.symbols[function].dump(std::cout);
+        headerDatabase.symbols[function].dump(std::cout);
       }
 
       printf("\nVariables:\n");
       for (const std::string& variable : variables) {
-        symbolDatabase.symbols[variable].dump(std::cout);
+        headerDatabase.symbols[variable].dump(std::cout);
       }
       if (dump_multiply_declared) {
         printf("\n");
@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
 
   if (dump_multiply_declared) {
     std::vector<const Symbol*> multiply_declared;
-    for (const auto& pair : symbolDatabase.symbols) {
+    for (const auto& pair : headerDatabase.symbols) {
       for (int api_level : api_levels) {
         if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
           multiply_declared.push_back(&pair.second);
