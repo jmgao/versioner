@@ -2,7 +2,6 @@
 #include <assert.h>
 #include <dirent.h>
 #include <err.h>
-#include <fts.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -19,20 +18,11 @@
 #include "clang/Tooling/Tooling.h"
 
 #include "HeaderDatabase.h"
+#include "LibraryDatabase.h"
+#include "Utils.h"
 
 using namespace clang::tooling;
 
-static const std::string& getWorkingDir() {
-  static std::string cwd;
-  if (cwd.length() == 0) {
-    char buf[PATH_MAX];
-    if (!getcwd(buf, sizeof(buf))) {
-      err(1, "getcwd failed");
-    }
-    cwd = buf;
-  }
-  return cwd;
-}
 
 static llvm::cl::OptionCategory VersionerCategory("versioner");
 
@@ -86,29 +76,6 @@ class HeaderCompilationDatabase : public CompilationDatabase {
     return headers;
   }
 };
-
-static std::vector<std::string> collectFiles(const char* directory) {
-  std::vector<std::string> files;
-
-  char* dir_argv[2] = { const_cast<char*>(directory), nullptr };
-  FTS* fts = fts_open(dir_argv, FTS_LOGICAL | FTS_NOCHDIR, nullptr);
-
-  if (!fts) {
-    err(1, "failed to open directory '%s'", directory);
-  }
-
-  FTSENT* ent;
-  while ((ent = fts_read(fts))) {
-    if (ent->fts_info & (FTS_D | FTS_DP)) {
-      continue;
-    }
-
-    files.push_back(ent->fts_path);
-  }
-
-  fts_close(fts);
-  return files;
-}
 
 static void compileHeaders(HeaderDatabase& database, const char* header_directory,
                             const char* dep_directory, int api_level) {
