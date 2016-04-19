@@ -24,7 +24,13 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
   }
 
-  std::string mangleDecl(NamedDecl* decl) {
+  std::string getDeclName(NamedDecl* decl) {
+    if (VarDecl* var_decl = dyn_cast<VarDecl>(decl)) {
+      if (!var_decl->isFileVarDecl()) {
+        return "<local var>";
+      }
+    }
+
     if (mangler->shouldMangleDeclName(decl)) {
       std::string mangled;
       llvm::raw_string_ostream ss(mangled);
@@ -32,7 +38,11 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       return mangled;
     }
 
-    return decl->getIdentifier()->getName();
+    auto identifier = decl->getIdentifier();
+    if (!identifier) {
+      return "<error>";
+    }
+    return identifier->getName();
   }
 
   bool VisitDecl(Decl* decl) {
@@ -52,6 +62,7 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
     VarDecl* var_decl = dyn_cast<VarDecl>(decl);
 
+    std::string symbol_name = getDeclName(named_decl);
     bool is_extern = named_decl->getFormalLinkage() == ExternalLinkage;
     bool is_definition = false;
 
@@ -69,20 +80,21 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
           is_definition = false;
           break;
 
-        case VarDecl::TentativeDefinition:
-        // Assume that tenative definitions are always definitions.
-        // If this isn't true, we can always hoist the actual definition out into its own header
-        // to avoid a false positive.
         case VarDecl::Definition:
           is_definition = true;
           break;
+
+        case VarDecl::TentativeDefinition:
+          // Forbid tentative definitions in headers.
+          fprintf(stderr, "ERROR: symbol '%s' is a tentative definition\n", symbol_name.c_str());
+          decl->dump();
+          abort();
       }
     } else {
       return true;
     }
 
     // Find or insert an entry for the symbol.
-    std::string symbol_name = mangleDecl(named_decl);
     auto symbol_it = database.symbols.find(symbol_name);
     if (symbol_it == database.symbols.end()) {
       Symbol symbol = {.name = symbol_name };
