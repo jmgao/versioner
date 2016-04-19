@@ -23,9 +23,7 @@
 
 using namespace clang::tooling;
 
-
 static llvm::cl::OptionCategory VersionerCategory("versioner");
-
 
 class HeaderCompilationDatabase : public CompilationDatabase {
   std::string cwd;
