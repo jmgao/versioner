@@ -163,7 +163,8 @@ int main(int argc, char** argv) {
   }
 
   if (api_levels.empty()) {
-    api_levels.push_back(10000);
+    std::vector<int> default_apis = { 10, 15, 16, 17, 18, 19, 21, 22, 23 };
+    api_levels = std::move(default_apis);
   }
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
