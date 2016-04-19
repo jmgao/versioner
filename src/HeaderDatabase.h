@@ -25,6 +25,52 @@ static const char* symbolTypeName(SymbolType type) {
   }
 }
 
+struct SymbolAvailability {
+  int introduced = 0;
+  int deprecated = 0;
+  int obsoleted = 0;
+
+  void dump(std::ostream& out = std::cout) const {
+    bool need_comma = false;
+    auto comma = [&out, &need_comma]() {
+      if (!need_comma) {
+        need_comma = true;
+        return;
+      }
+      out << ", ";
+    };
+
+    if (introduced != 0) {
+      comma();
+      out << "introduced = " << introduced;
+    }
+    if (deprecated != 0) {
+      comma();
+      out << "deprecated = " << deprecated;
+    }
+    if (obsoleted != 0) {
+      comma();
+      out << "obsoleted = " << obsoleted;
+    }
+  }
+
+  bool empty() const {
+    return !(introduced || deprecated || obsoleted);
+  }
+
+  auto tie() const {
+    return std::tie(introduced, deprecated, obsoleted);
+  }
+
+  bool operator==(const SymbolAvailability& rhs) const {
+    return this->tie() == rhs.tie();
+  }
+
+  bool operator!=(const SymbolAvailability& rhs) const {
+    return !(*this == rhs);
+  }
+};
+
 struct SymbolLocation {
   std::string filename;
   unsigned line_number;
@@ -32,6 +78,7 @@ struct SymbolLocation {
   SymbolType type;
   bool is_extern;
   bool is_definition;
+  SymbolAvailability availability;
   mutable std::set<int> api_levels;
 
   auto tie() const {
@@ -86,6 +133,11 @@ struct Symbol {
       out << "        " << linkage << " " << var_type << " " << declaration_type << " @ "
           << location.filename << ":" << location.line_number << ":" << location.column << " ["
           << api_levels << "]\n";
+      if (!location.availability.empty()) {
+        out << "            ";
+        location.availability.dump(out);
+        out << "\n";
+      }
     }
   }
 

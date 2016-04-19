@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "clang/AST/AST.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/ASTUnit.h"
@@ -94,6 +95,25 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       return true;
     }
 
+    // Look for availability annotations.
+    SymbolAvailability availability;
+    for (const AvailabilityAttr* attr : decl->specific_attrs<AvailabilityAttr>()) {
+      if (attr->getPlatform()->getName() != "android") {
+        fprintf(stderr, "skipping non-android platform %s\n",
+                attr->getPlatform()->getName().str().c_str());
+        continue;
+      }
+      if (attr->getIntroduced().getMajor() != 0) {
+        availability.introduced = attr->getIntroduced().getMajor();
+      }
+      if (attr->getDeprecated().getMajor() != 0) {
+        availability.deprecated = attr->getDeprecated().getMajor();
+      }
+      if (attr->getObsoleted().getMajor()) {
+        availability.obsoleted = attr->getObsoleted().getMajor();
+      }
+    }
+
     // Find or insert an entry for the symbol.
     auto symbol_it = database.symbols.find(symbol_name);
     if (symbol_it == database.symbols.end()) {
@@ -111,10 +131,23 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       .type = symbol_type,
       .is_extern = is_extern,
       .is_definition = is_definition,
+      .availability = availability,
     };
 
     // It's fine if the location is already there, we'll get an iterator to the existing element.
-    auto location_it = symbol_locations.insert(symbol_locations.begin(), location);
+    auto location_it = symbol_locations.begin();
+    bool inserted = false;
+    std::tie(location_it, inserted) = symbol_locations.insert(location);
+
+    // If we didn't insert, check to see if the availability attributes are identical.
+    if (!inserted) {
+      if (location_it->availability != availability) {
+        fprintf(stderr, "ERROR: availability attribute mismatch\n");
+        decl->dump();
+        abort();
+      }
+    }
+
     location_it->addAPI(api_level);
 
     return true;
