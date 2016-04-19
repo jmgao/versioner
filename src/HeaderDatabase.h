@@ -123,16 +123,25 @@ struct Symbol {
     return result;
   }
 
-  void dump(std::ostream& out = std::cout) const {
+  void dump(const std::string& base_path = "", std::ostream& out = std::cout) const {
     out << "    " << name << " declared in " << locations.size() << " locations:\n";
     for (const SymbolLocation& location : locations) {
       const char* var_type = symbolTypeName(location.type);
       const char* declaration_type = location.is_definition ? "definition" : "declaration";
       const char* linkage = location.is_extern ? "extern" : "static";
       std::string api_levels = android::base::Join(location.api_levels, ",");
+
+      std::string filename;
+      if (android::base::StartsWith(location.filename, base_path.c_str())) {
+        filename = location.filename.substr(base_path.length());
+      } else {
+        filename = location.filename;
+      }
+
       out << "        " << linkage << " " << var_type << " " << declaration_type << " @ "
-          << location.filename << ":" << location.line_number << ":" << location.column << " ["
-          << api_levels << "]\n";
+          << filename << ":" << location.line_number << ":" << location.column << " [" << api_levels
+          << "]\n";
+
       if (!location.availability.empty()) {
         out << "            ";
         location.availability.dump(out);
@@ -184,10 +193,10 @@ class HeaderDatabase {
 
   void parseAST(clang::ASTUnit* ast, int api_level);
 
-  void dump(std::ostream& out = std::cout) const {
+  void dump(const std::string& base_path = "", std::ostream& out = std::cout) const {
     out << "HeaderDatabase contains " << symbols.size() << " symbols:\n";
     for (const auto& pair : symbols) {
-      pair.second.dump(out);
+      pair.second.dump(base_path, out);
     }
   }
 };

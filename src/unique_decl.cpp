@@ -113,6 +113,7 @@ void usage() {
 int main(int argc, char** argv) {
   HeaderDatabase headerDatabase;
 
+  std::string cwd = getWorkingDir() + "/";
   std::vector<int> api_levels;
   bool default_args = true;
   bool dump_symbols = false;
@@ -185,7 +186,7 @@ int main(int argc, char** argv) {
 
         case SymbolType::inconsistent:
           fprintf(stderr, "ERROR: inconsistent symbol type for %s", pair.first.c_str());
-          pair.second.dump();
+          pair.second.dump(cwd);
           exit(1);
       }
     }
@@ -193,12 +194,12 @@ int main(int argc, char** argv) {
     if (dump_symbols) {
       printf("Functions:\n");
       for (const std::string& function : functions) {
-        headerDatabase.symbols[function].dump(std::cout);
+        headerDatabase.symbols[function].dump(cwd);
       }
 
       printf("\nVariables:\n");
       for (const std::string& variable : variables) {
-        headerDatabase.symbols[variable].dump(std::cout);
+        headerDatabase.symbols[variable].dump(cwd);
       }
       if (dump_multiply_declared) {
         printf("\n");
@@ -231,7 +232,7 @@ int main(int argc, char** argv) {
     if (multiply_declared.size() > 0) {
       printf("Multiply declared symbols:\n");
       for (const Symbol* symbol : multiply_declared) {
-        symbol->dump();
+        symbol->dump(cwd);
       }
     } else {
       printf("No multiply declared symbols.\n");
