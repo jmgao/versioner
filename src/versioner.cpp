@@ -106,7 +106,7 @@ static void compileHeaders(HeaderDatabase& database, const char* header_director
 }
 
 void usage() {
-  printf("usage: unique_decl [-d/-m/-f/-v] <header directory> [<header dependency directory>]\n");
+  printf("usage: versioner [-d/-m/-f/-v/-l <lib dir>] <header dir> [<header deps dir>]\n");
   exit(1);
 }
 
