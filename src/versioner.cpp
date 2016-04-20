@@ -206,13 +206,7 @@ int main(int argc, char** argv) {
   if (dump_symbols) {
     printf("\nSymbols:\n");
     for (auto pair : symbol_database) {
-      std::string message = pair.first;
-      message.append(": ");
-      for (int api_level : pair.second) {
-        message.append(std::to_string(api_level));
-        message.append(", ");
-      }
-      message.resize(message.length() - 2);
+      std::string message = pair.first + ": " +  Join(api_levels, ", ");
       printf("    %s\n", message.c_str());
     }
   }
