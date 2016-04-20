@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -120,9 +121,10 @@ int main(int argc, char** argv) {
   bool dump_multiply_declared = false;
   bool list_functions = false;
   bool list_variables = false;
+  const char* library_dir = nullptr;
 
   int c;
-  while ((c = getopt(argc, argv, "a:dmfv")) != -1) {
+  while ((c = getopt(argc, argv, "a:dmfvl:")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
@@ -146,6 +148,22 @@ int main(int argc, char** argv) {
       case 'v':
         list_variables = true;
         break;
+      case 'l': {
+        if (library_dir) {
+          usage();
+        }
+
+        library_dir = optarg;
+
+        struct stat st;
+        if (stat(library_dir, &st) != 0) {
+          err(1, "failed to stat library dir");
+        }
+        if (!S_ISDIR(st.st_mode)) {
+          errx(1, "%s is not a directory", optarg);
+        }
+        break;
+      }
       default:
         usage();
         break;
@@ -171,7 +189,35 @@ int main(int argc, char** argv) {
     compileHeaders(headerDatabase, argv[optind], dependencies, api_level);
   }
 
-  if (dump_symbols || list_functions || list_variables) {
+  std::map<std::string, std::set<int>> symbol_database;
+  for (int api_level : api_levels) {
+    std::unordered_set<std::string> symbols;
+
+    std::string api_dir = android::base::StringPrintf("%s/android-%d/", library_dir, api_level);
+    std::vector<std::string> libraries = collectFiles(api_dir.c_str());
+    for (const std::string& library : libraries) {
+      std::unordered_set<std::string> lib_symbols = getSymbols(library);
+      for (const std::string& symbol_name : lib_symbols) {
+        symbol_database[symbol_name].insert(api_level);
+      }
+    }
+  }
+
+  if (dump_symbols) {
+    printf("\nSymbols:\n");
+    for (auto pair : symbol_database) {
+      std::string message = pair.first;
+      message.append(": ");
+      for (int api_level : pair.second) {
+        message.append(std::to_string(api_level));
+        message.append(", ");
+      }
+      message.resize(message.length() - 2);
+      printf("    %s\n", message.c_str());
+    }
+  }
+
+  if (list_functions || list_variables) {
     std::set<std::string> functions;
     std::set<std::string> variables;
     for (const auto& pair : headerDatabase.symbols) {
@@ -191,29 +237,17 @@ int main(int argc, char** argv) {
       }
     }
 
-    if (dump_symbols) {
-      printf("Functions:\n");
+    if (list_functions) {
+      printf("\nFunctions:\n");
       for (const std::string& function : functions) {
         headerDatabase.symbols[function].dump(cwd);
       }
+    }
 
+    if (list_variables) {
       printf("\nVariables:\n");
       for (const std::string& variable : variables) {
         headerDatabase.symbols[variable].dump(cwd);
-      }
-      if (dump_multiply_declared) {
-        printf("\n");
-      }
-    } else {
-      if (list_functions) {
-        for (const std::string& function : functions) {
-          printf("%s\n", function.c_str());
-        }
-      }
-      if (list_variables) {
-        for (const std::string& variable : variables) {
-          printf("%s\n", variable.c_str());
-        }
       }
     }
   }
@@ -228,6 +262,8 @@ int main(int argc, char** argv) {
         }
       }
     }
+
+    printf("\n");
 
     if (multiply_declared.size() > 0) {
       printf("Multiply declared symbols:\n");
