@@ -106,8 +106,23 @@ static void compileHeaders(HeaderDatabase& database, const char* header_director
   }
 }
 
+const std::vector<int> default_apis = { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 };
+
 void usage() {
-  printf("usage: versioner [-d/-m/-f/-v/-l <lib dir>] <header dir> [<header deps dir>]\n");
+  printf("Usage: versioner [OPTION]... HEADER_PATH [DEPS_PATH]\n");
+  printf("Compile and parse headers at HEADER_PATH, with DEPS_PATH on the include path");
+  printf("\n");
+  printf("\n");
+  printf("Header compilation:\n");
+  printf("  -a API_LEVEL\tbuild with the specified API level (can be repeated)\n");
+  printf("    \t\tdefaults to %s\n", Join(default_apis, ", ").c_str());
+  printf("  -f\t\tdump functions exposed in header dir\n");
+  printf("  -v\t\tdump variables exposed in header dir\n");
+  printf("  -m\t\tdump multiply-declared symbols\n");
+  printf("\n");
+  printf("Library inspection:\n");
+  printf("  -l LIB_PATH\tinspect libraries at LIB_PATH\n");
+  printf("  -d\t\tdump symbol availability in libraries\n");
   exit(1);
 }
 
@@ -124,7 +139,7 @@ int main(int argc, char** argv) {
   const char* library_dir = nullptr;
 
   int c;
-  while ((c = getopt(argc, argv, "a:dmfvl:")) != -1) {
+  while ((c = getopt(argc, argv, "a:fvml:d")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
@@ -136,17 +151,14 @@ int main(int argc, char** argv) {
         api_levels.push_back(api_level);
         break;
       }
-      case 'd':
-        dump_symbols = true;
-        break;
-      case 'm':
-        dump_multiply_declared = true;
-        break;
       case 'f':
         list_functions = true;
         break;
       case 'v':
         list_variables = true;
+        break;
+      case 'm':
+        dump_multiply_declared = true;
         break;
       case 'l': {
         if (library_dir) {
@@ -164,6 +176,9 @@ int main(int argc, char** argv) {
         }
         break;
       }
+      case 'd':
+        dump_symbols = true;
+        break;
       default:
         usage();
         break;
@@ -180,7 +195,6 @@ int main(int argc, char** argv) {
   }
 
   if (api_levels.empty()) {
-    std::vector<int> default_apis = { 10, 15, 16, 17, 18, 19, 21, 22, 23 };
     api_levels = std::move(default_apis);
   }
 
