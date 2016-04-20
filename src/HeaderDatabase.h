@@ -1,9 +1,9 @@
 #pragma once
 
 #include <iostream>
+#include <map>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "android-base/strings.h"
@@ -189,7 +189,7 @@ class ASTUnit;
 
 class HeaderDatabase {
  public:
-  std::unordered_map<std::string, Symbol> symbols;
+  std::map<std::string, Symbol> symbols;
 
   void parseAST(clang::ASTUnit* ast, int api_level);
 

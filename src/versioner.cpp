@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
     compileHeaders(header_database, argv[optind], dependencies, api_level);
   }
 
-  std::map<std::string, std::set<int>> symbol_database;
+  std::map<std::string, std::set<int>> library_database;
   for (int api_level : api_levels) {
     std::unordered_set<std::string> symbols;
 
@@ -212,50 +212,33 @@ int main(int argc, char** argv) {
     for (const std::string& library : libraries) {
       std::unordered_set<std::string> lib_symbols = getSymbols(library);
       for (const std::string& symbol_name : lib_symbols) {
-        symbol_database[symbol_name].insert(api_level);
+        library_database[symbol_name].insert(api_level);
       }
     }
   }
 
   if (dump_symbols) {
     printf("\nSymbols:\n");
-    for (auto pair : symbol_database) {
+    for (auto pair : library_database) {
       std::string message = pair.first + ": " +  Join(api_levels, ", ");
       printf("    %s\n", message.c_str());
     }
   }
 
-  if (list_functions || list_variables) {
-    std::set<std::string> functions;
-    std::set<std::string> variables;
+  if (list_functions) {
+    printf("\nFunctions:\n");
     for (const auto& pair : header_database.symbols) {
-      switch (pair.second.type()) {
-        case SymbolType::function:
-          functions.insert(pair.first);
-          break;
-
-        case SymbolType::variable:
-          variables.insert(pair.first);
-          break;
-
-        case SymbolType::inconsistent:
-          fprintf(stderr, "ERROR: inconsistent symbol type for %s", pair.first.c_str());
-          pair.second.dump(cwd);
-          exit(1);
+      if (pair.second.type() == SymbolType::function) {
+        pair.second.dump(cwd);
       }
     }
+  }
 
-    if (list_functions) {
-      printf("\nFunctions:\n");
-      for (const std::string& function : functions) {
-        header_database.symbols[function].dump(cwd);
-      }
-    }
-
-    if (list_variables) {
-      printf("\nVariables:\n");
-      for (const std::string& variable : variables) {
-        header_database.symbols[variable].dump(cwd);
+  if (list_variables) {
+    printf("\nVariables:\n");
+    for (const auto& pair : header_database.symbols) {
+      if (pair.second.type() == SymbolType::variable) {
+        pair.second.dump(cwd);
       }
     }
   }
