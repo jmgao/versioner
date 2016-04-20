@@ -127,7 +127,7 @@ void usage() {
 }
 
 int main(int argc, char** argv) {
-  HeaderDatabase headerDatabase;
+  HeaderDatabase header_database;
 
   std::string cwd = getWorkingDir() + "/";
   std::vector<int> api_levels;
@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
   for (int api_level : api_levels) {
-    compileHeaders(headerDatabase, argv[optind], dependencies, api_level);
+    compileHeaders(header_database, argv[optind], dependencies, api_level);
   }
 
   std::map<std::string, std::set<int>> symbol_database;
@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
   if (list_functions || list_variables) {
     std::set<std::string> functions;
     std::set<std::string> variables;
-    for (const auto& pair : headerDatabase.symbols) {
+    for (const auto& pair : header_database.symbols) {
       switch (pair.second.type()) {
         case SymbolType::function:
           functions.insert(pair.first);
@@ -248,21 +248,21 @@ int main(int argc, char** argv) {
     if (list_functions) {
       printf("\nFunctions:\n");
       for (const std::string& function : functions) {
-        headerDatabase.symbols[function].dump(cwd);
+        header_database.symbols[function].dump(cwd);
       }
     }
 
     if (list_variables) {
       printf("\nVariables:\n");
       for (const std::string& variable : variables) {
-        headerDatabase.symbols[variable].dump(cwd);
+        header_database.symbols[variable].dump(cwd);
       }
     }
   }
 
   if (dump_multiply_declared) {
     std::vector<const Symbol*> multiply_declared;
-    for (const auto& pair : headerDatabase.symbols) {
+    for (const auto& pair : header_database.symbols) {
       for (int api_level : api_levels) {
         if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
           multiply_declared.push_back(&pair.second);
