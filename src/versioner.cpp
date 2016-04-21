@@ -354,7 +354,17 @@ int main(int argc, char** argv) {
         }
       } else {
         int first_available = *library_availability.begin();
-        if (first_available > *api_levels.begin()) {
+
+        // Allow missing library symbols if there's an inline definition.
+        // TODO: Make this more granular.
+        bool skip = false;
+        for (int api_level : api_levels) {
+          if (symbol.hasDefinition(api_level)) {
+            skip = true;
+          }
+        }
+
+        if (!skip && first_available > *api_levels.begin()) {
           missing_version[first_available].insert(symbol_name);
         }
       }

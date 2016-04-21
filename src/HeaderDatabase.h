@@ -119,6 +119,15 @@ struct Symbol {
     return result;
   }
 
+  bool hasDefinition(int api_level) const {
+    for (const auto& location : locations) {
+      if (location.is_definition && location.matchesAPI(api_level)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   SymbolType type() const {
     SymbolType result = locations.begin()->type;
     for (const SymbolLocation& location : locations) {
