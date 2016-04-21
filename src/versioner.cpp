@@ -115,7 +115,7 @@ void usage() {
   printf("\n");
   printf("Header compilation:\n");
   printf("  -a API_LEVEL\tbuild with the specified API level (can be repeated)\n");
-  printf("    \t\tdefaults to %s\n", Join(default_apis, ", ").c_str());
+  printf("    \t\tdefaults to %s\n", Join(default_apis).c_str());
   printf("  -f\t\tdump functions exposed in header dir\n");
   printf("  -v\t\tdump variables exposed in header dir\n");
   printf("  -m\t\tdump multiply-declared symbols\n");
@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
   if (dump_symbols) {
     printf("\nSymbols:\n");
     for (auto pair : library_database) {
-      std::string message = pair.first + ": " +  Join(api_levels, ", ");
+      std::string message = pair.first + ": " + Join(api_levels);
       printf("    %s\n", message.c_str());
     }
   }
