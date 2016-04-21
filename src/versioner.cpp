@@ -123,7 +123,8 @@ void usage() {
   printf("Library inspection:\n");
   printf("  -l LIB_PATH\tinspect libraries at LIB_PATH\n");
   printf("  -d\t\tdump symbol availability in libraries\n");
-  printf("  -c\t\tcompare symbol availability against availability attributes\n");
+  printf("  -c\t\tcompare availability attributes against ndk stub libraries\n");
+  printf("  -r\t\tcompare availability attributes against real device libraries\n");
   printf("  -u\t\twarn on unversioned symbols\n");
   exit(1);
 }
@@ -138,12 +139,13 @@ int main(int argc, char** argv) {
   bool dump_multiply_declared = false;
   bool list_functions = false;
   bool list_variables = false;
-  bool compare_availability = false;
+  bool compare_availability_stubs = false;
+  bool compare_availability_real = false;
   bool warn_unversioned = false;
   const char* library_dir = nullptr;
 
   int c;
-  while ((c = getopt(argc, argv, "a:fvml:dcu")) != -1) {
+  while ((c = getopt(argc, argv, "a:fvml:dcru")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
@@ -184,7 +186,10 @@ int main(int argc, char** argv) {
         dump_symbols = true;
         break;
       case 'c':
-        compare_availability = true;
+        compare_availability_stubs = true;
+        break;
+      case 'r':
+        compare_availability_real = true;
         break;
       case 'u':
         warn_unversioned = true;
@@ -195,9 +200,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (compare_availability && !library_dir) {
-    fprintf(stderr, "ERROR: can't validate availability without libraries to compare against\n");
-    exit(1);
+  if (compare_availability_stubs && compare_availability_real) {
+    errx(1, "-c and -r are mutually exclusive");
+  }
+
+  if ((compare_availability_stubs || compare_availability_real) && !library_dir) {
+    errx(1, "can't validate availability without libraries to compare against");
   }
 
   if (default_args) {
@@ -281,8 +289,36 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (compare_availability) {
-    std::map<std::string, int> missing_version;
+  // If we're comparing against the stub libraries, we want to ensure that everything visible in the
+  // stub library is visible in the headers, and vice versa. If we're comparing against the real
+  // libraries, we only want to make sure that what's visible in the headers is visible in the
+  // library, since a symbol might exist in a previous version, but be intentionally hidden in
+  // the NDK stub (e.g. because it's broken before a certain version).
+  if (compare_availability_stubs) {
+    for (const auto& pair : library_database) {
+      const std::string& symbol_name = pair.first;
+      const std::set<int>& symbol_api_levels = pair.second;
+
+      // Make sure symbols never disappear from stubs.
+      bool found = false;
+      std::set<int> expected;
+      for (int api_level : api_levels) {
+        if (!found && symbol_api_levels.count(api_level)) {
+          found = true;
+        } else if (found && !symbol_api_levels.count(api_level)) {
+          expected.insert(api_level);
+        }
+      }
+
+      if (!expected.empty()) {
+        fprintf(stderr, "Gap in library availability for %s: expected to be found in %s\n",
+                symbol_name.c_str(), Join(expected).c_str());
+      }
+    }
+  }
+
+  if (compare_availability_stubs || compare_availability_real) {
+    std::map<int, std::set<std::string>> missing_version;
 
     for (const auto& pair : header_database.symbols) {
       const std::string& symbol_name = pair.first;
@@ -291,7 +327,7 @@ int main(int argc, char** argv) {
       auto it = library_database.find(symbol_name);
       if (it == library_database.end()) {
         if (warn_unversioned) {
-          printf("Exported symbol %s not found in any libraries\n", symbol_name.c_str());
+          fprintf(stderr, "Exported symbol %s not found in any libraries\n", symbol_name.c_str());
         }
         continue;
       }
@@ -312,21 +348,29 @@ int main(int argc, char** argv) {
           }
 
           if (library_availability.find(api_level) == library_availability.end()) {
-            printf("Symbol %s is missing in API level %d\n", symbol_name.c_str(), api_level);
+            fprintf(stderr, "Symbol %s is missing in API level %d\n", symbol_name.c_str(),
+                    api_level);
           }
         }
       } else {
         int first_available = *library_availability.begin();
         if (first_available > *api_levels.begin()) {
-          missing_version[symbol_name] = first_available;
+          missing_version[first_available].insert(symbol_name);
         }
       }
     }
 
     if (!missing_version.empty()) {
-      printf("Missing version annotations:\n");
       for (const auto& pair : missing_version) {
-        printf("Symbol %s is unversioned, first seen in %d\n", pair.first.c_str(), pair.second);
+        const int api_level = pair.first;
+        const std::set<std::string>& missing_symbols = pair.second;
+
+        for (const std::string& symbol_name : missing_symbols) {
+          for (const SymbolLocation& symbol_loc : header_database.symbols[symbol_name].locations) {
+            printf("%d:%s:%s:%d\n", api_level, symbol_name.c_str(), symbol_loc.filename.c_str(),
+                   symbol_loc.line_number);
+          }
+        }
       }
     }
   }
