@@ -106,7 +106,7 @@ static void compileHeaders(HeaderDatabase& database, const char* header_director
   }
 }
 
-const std::vector<int> default_apis = { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 };
+const std::set<int> default_apis = { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 };
 
 void usage() {
   printf("Usage: versioner [OPTION]... HEADER_PATH [DEPS_PATH]\n");
@@ -123,6 +123,8 @@ void usage() {
   printf("Library inspection:\n");
   printf("  -l LIB_PATH\tinspect libraries at LIB_PATH\n");
   printf("  -d\t\tdump symbol availability in libraries\n");
+  printf("  -c\t\tcompare symbol availability against availability attributes\n");
+  printf("  -u\t\twarn on unversioned symbols\n");
   exit(1);
 }
 
@@ -130,16 +132,18 @@ int main(int argc, char** argv) {
   HeaderDatabase header_database;
 
   std::string cwd = getWorkingDir() + "/";
-  std::vector<int> api_levels;
+  std::set<int> api_levels;
   bool default_args = true;
   bool dump_symbols = false;
   bool dump_multiply_declared = false;
   bool list_functions = false;
   bool list_variables = false;
+  bool compare_availability = false;
+  bool warn_unversioned = false;
   const char* library_dir = nullptr;
 
   int c;
-  while ((c = getopt(argc, argv, "a:fvml:d")) != -1) {
+  while ((c = getopt(argc, argv, "a:fvml:dcu")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
@@ -148,7 +152,7 @@ int main(int argc, char** argv) {
         if (end == optarg || strlen(end) > 0) {
           usage();
         }
-        api_levels.push_back(api_level);
+        api_levels.insert(api_level);
         break;
       }
       case 'f':
@@ -179,10 +183,21 @@ int main(int argc, char** argv) {
       case 'd':
         dump_symbols = true;
         break;
+      case 'c':
+        compare_availability = true;
+        break;
+      case 'u':
+        warn_unversioned = true;
+        break;
       default:
         usage();
         break;
     }
+  }
+
+  if (compare_availability && !library_dir) {
+    fprintf(stderr, "ERROR: can't validate availability without libraries to compare against\n");
+    exit(1);
   }
 
   if (default_args) {
@@ -263,6 +278,56 @@ int main(int argc, char** argv) {
       }
     } else {
       printf("No multiply declared symbols.\n");
+    }
+  }
+
+  if (compare_availability) {
+    std::map<std::string, int> missing_version;
+
+    for (const auto& pair : header_database.symbols) {
+      const std::string& symbol_name = pair.first;
+      const Symbol& symbol = pair.second;
+
+      auto it = library_database.find(symbol_name);
+      if (it == library_database.end()) {
+        if (warn_unversioned) {
+          printf("Exported symbol %s not found in any libraries\n", symbol_name.c_str());
+        }
+        continue;
+      }
+
+      const std::set<int>& library_availability = it->second;
+
+      if (!symbol.availability().empty()) {
+        // Check that the symbol is available for everything declared as available.
+        int low = symbol.availability().introduced;
+        int high = symbol.availability().obsoleted;
+        if (high == 0) {
+          high = INT_MAX;
+        }
+
+        for (int api_level : api_levels) {
+          if (api_level < low || api_level > high) {
+            continue;
+          }
+
+          if (library_availability.find(api_level) == library_availability.end()) {
+            printf("Symbol %s is missing in API level %d\n", symbol_name.c_str(), api_level);
+          }
+        }
+      } else {
+        int first_available = *library_availability.begin();
+        if (first_available > *api_levels.begin()) {
+          missing_version[symbol_name] = first_available;
+        }
+      }
+    }
+
+    if (!missing_version.empty()) {
+      printf("Missing version annotations:\n");
+      for (const auto& pair : missing_version) {
+        printf("Symbol %s is unversioned, first seen in %d\n", pair.first.c_str(), pair.second);
+      }
     }
   }
 

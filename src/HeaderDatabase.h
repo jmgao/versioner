@@ -113,6 +113,12 @@ struct Symbol {
   std::string name;
   std::set<SymbolLocation> locations;
 
+  SymbolAvailability availability() const {
+    // TODO: Make sure that all of the locations have the same availability.
+    SymbolAvailability result = locations.begin()->availability;
+    return result;
+  }
+
   SymbolType type() const {
     SymbolType result = locations.begin()->type;
     for (const SymbolLocation& location : locations) {
