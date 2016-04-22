@@ -23,22 +23,39 @@
 #include "Utils.h"
 
 using namespace clang::tooling;
+using android::base::StringPrintf;
 
-static llvm::cl::OptionCategory VersionerCategory("versioner");
+static const std::string default_arch = "arm";
+static const std::set<std::string> supported_archs = { "arm", "arm64", "x86", "x86_64" };
+static std::unordered_map<std::string, std::string> arch_targets = {
+  { "arm", "arm-linux-androideabi" },
+  { "arm64", "aarch64-linux-android" },
+  { "x86", "i686-linux-android" },
+  { "x86_64", "x86_64-linux-android" },
+};
+
+static std::map<std::string, std::set<int>> default_apis = {
+  { "arm", { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 } },
+  { "arm64", { 21, 23, 24 } },
+  { "x86", { 9, 12, 13, 14, 15, 16, 18, 19, 21, 23, 24 } },
+  { "x86_64", { 21, 23, 24 } },
+};
 
 class HeaderCompilationDatabase : public CompilationDatabase {
   std::string cwd;
   std::vector<std::string> headers;
   std::vector<std::string> include_dirs;
   int api_level;
+  std::string target;
 
  public:
   HeaderCompilationDatabase(std::string cwd, std::vector<std::string> headers,
-                            std::vector<std::string> include_dirs, int api_level)
+                            std::vector<std::string> include_dirs, int api_level, std::string target)
       : cwd(std::move(cwd)),
         headers(std::move(headers)),
         include_dirs(std::move(include_dirs)),
-        api_level(api_level) {
+        api_level(api_level),
+        target(std::move(target)) {
   }
 
   CompileCommand generateCompileCommand(const std::string& filename) const {
@@ -48,12 +65,12 @@ class HeaderCompilationDatabase : public CompilationDatabase {
       command.push_back(dir);
     }
     command.push_back("-DANDROID");
-    command.push_back(android::base::StringPrintf("-D__ANDROID_API__=%d", api_level));
+    command.push_back(StringPrintf("-D__ANDROID_API__=%d", api_level));
     command.push_back("-D_FORTIFY_SOURCE=2");
     command.push_back("-D_GNU_SOURCE");
     command.push_back("-Wno-unknown-attributes");
     command.push_back("-target");
-    command.push_back("arm-linux-androideabi");
+    command.push_back(target);
     return CompileCommand(cwd, filename, command);
   }
 
@@ -76,27 +93,37 @@ class HeaderCompilationDatabase : public CompilationDatabase {
   }
 };
 
-static void compileHeaders(HeaderDatabase& database, const char* header_directory,
-                            const char* dep_directory, int api_level) {
+static void compileHeaders(HeaderDatabase& database, const char* header_directory, const char* deps,
+                           const std::string& arch, int api_level) {
   std::string cwd = getWorkingDir();
   std::vector<std::string> headers = collectFiles(header_directory);
 
   std::vector<std::string> dependencies = { header_directory };
-  if (dep_directory) {
-    DIR* deps = opendir(dep_directory);
-    if (!deps) {
-      err(1, "failed to open dependency directory");
-    }
+  if (deps) {
+    std::string dep_directory = deps;
+    auto collect_children = [&dependencies](const std::string& dir_path) {
+      DIR* dir = opendir(dir_path.c_str());
+      if (!dir) {
+        err(1, "failed to open dependency directory");
+      }
 
-    struct dirent* dent;
-    while ((dent = readdir(deps))) {
-      dependencies.push_back(std::string(dep_directory) + "/" + dent->d_name);
-    }
+      struct dirent* dent;
+      while ((dent = readdir(dir))) {
+        if (dent->d_name[0] == '.') {
+          continue;
+        }
+        dependencies.push_back(dir_path + "/" + dent->d_name);
+      }
 
-    closedir(deps);
+      closedir(dir);
+    };
+
+    collect_children(dep_directory + "/common");
+    collect_children(dep_directory + "/" + arch);
   }
 
-  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies, api_level);
+  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies, api_level,
+                                                arch_targets[arch]);
   ClangTool tool(compilationDatabase, headers);
 
   std::vector<std::unique_ptr<clang::ASTUnit>> asts;
@@ -106,16 +133,17 @@ static void compileHeaders(HeaderDatabase& database, const char* header_director
   }
 }
 
-const std::set<int> default_apis = { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 };
-
 void usage() {
   printf("Usage: versioner [OPTION]... HEADER_PATH [DEPS_PATH]\n");
-  printf("Compile and parse headers at HEADER_PATH, with DEPS_PATH on the include path");
+  printf("Compile and parse headers at HEADER_PATH, with DEPS_PATH on the include path\n");
   printf("\n");
+  printf("Target specification:\n");
+  printf("  -a API_LEVEL\tbuild with the specified API level (can be repeated)\n");
+  printf("  -p ARCH\tbuild with the specified architecture\n");
+  printf("    \t\tvalid arguments are %s\n", Join(supported_archs).c_str());
+  printf("    \t\tdefaults to %s\n", default_arch.c_str());
   printf("\n");
   printf("Header compilation:\n");
-  printf("  -a API_LEVEL\tbuild with the specified API level (can be repeated)\n");
-  printf("    \t\tdefaults to %s\n", Join(default_apis).c_str());
   printf("  -f\t\tdump functions exposed in header dir\n");
   printf("  -v\t\tdump variables exposed in header dir\n");
   printf("  -m\t\tdump multiply-declared symbols\n");
@@ -134,6 +162,7 @@ int main(int argc, char** argv) {
 
   std::string cwd = getWorkingDir() + "/";
   std::set<int> api_levels;
+  std::string arch = default_arch;
   bool default_args = true;
   bool dump_symbols = false;
   bool dump_multiply_declared = false;
@@ -145,7 +174,7 @@ int main(int argc, char** argv) {
   const char* library_dir = nullptr;
 
   int c;
-  while ((c = getopt(argc, argv, "a:fvml:dcru")) != -1) {
+  while ((c = getopt(argc, argv, "a:p:fvml:dcru")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
@@ -157,6 +186,9 @@ int main(int argc, char** argv) {
         api_levels.insert(api_level);
         break;
       }
+      case 'p':
+        arch = optarg;
+        break;
       case 'f':
         list_functions = true;
         break;
@@ -218,24 +250,26 @@ int main(int argc, char** argv) {
   }
 
   if (api_levels.empty()) {
-    api_levels = std::move(default_apis);
+    api_levels = default_apis[arch];
   }
 
   const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
   for (int api_level : api_levels) {
-    compileHeaders(header_database, argv[optind], dependencies, api_level);
+    compileHeaders(header_database, argv[optind], dependencies, arch, api_level);
   }
 
   std::map<std::string, std::set<int>> library_database;
-  for (int api_level : api_levels) {
-    std::unordered_set<std::string> symbols;
+  if (library_dir) {
+    for (int api_level : api_levels) {
+      std::unordered_set<std::string> symbols;
 
-    std::string api_dir = android::base::StringPrintf("%s/android-%d/", library_dir, api_level);
-    std::vector<std::string> libraries = collectFiles(api_dir.c_str());
-    for (const std::string& library : libraries) {
-      std::unordered_set<std::string> lib_symbols = getSymbols(library);
-      for (const std::string& symbol_name : lib_symbols) {
-        library_database[symbol_name].insert(api_level);
+      std::string api_dir = StringPrintf("%s/%s/android-%d/", library_dir, arch.c_str(), api_level);
+      std::vector<std::string> libraries = collectFiles(api_dir.c_str());
+      for (const std::string& library : libraries) {
+        std::unordered_set<std::string> lib_symbols = getSymbols(library);
+        for (const std::string& symbol_name : lib_symbols) {
+          library_database[symbol_name].insert(api_level);
+        }
       }
     }
   }
