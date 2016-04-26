@@ -95,6 +95,11 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       return true;
     }
 
+    if (decl->hasAttr<UnavailableAttr>()) {
+      // Skip declarations that exist only for compile-time diagnostics.
+      return true;
+    }
+
     // Look for availability annotations.
     SymbolAvailability availability;
     for (const AvailabilityAttr* attr : decl->specific_attrs<AvailabilityAttr>()) {
