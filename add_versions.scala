@@ -15,8 +15,8 @@ object Command {
 }
 
 def patch(filename: String, lines: Array[String], startLine: Int, endLine: Int, version: Int) = {
-  val patchedLine = lines(patchLine - 1).replace(";", " __INTRODUCED_IN(%d);".format(version))
-  lines(patchLine - 1) = patchedLine
+  val patchedLine = lines(endLine - 1).replace(";", " __INTRODUCED_IN(%d);".format(version))
+  lines(endLine - 1) = patchedLine
 }
 
 def getEndLine(filename: String, lines: Array[String], startLine: Int): Int = {
@@ -71,9 +71,9 @@ match {
       val linesArray = lines.getLines.toArray
 
       sortedCmds.foreach { cmd => {
-        val patchLine = getEndLine(file, linesArray, cmd.lineNumber)
-        println("    %d => %s".format(patchLine, cmd))
-        patch(file, linesArray, cmd.lineNumber, patchLine, cmd.version)
+        val endLine = getEndLine(file, linesArray, cmd.lineNumber)
+        println("    %d => %s".format(endLine, cmd))
+        patch(file, linesArray, cmd.lineNumber, endLine, cmd.version)
       }}
 
       val writer = new PrintWriter(file)
