@@ -364,6 +364,7 @@ int main(int argc, char** argv) {
       if (it == library_database.end()) {
         if (warn_unversioned) {
           fprintf(stderr, "Exported symbol %s not found in any libraries\n", symbol_name.c_str());
+          symbol.dump(cwd, std::cerr);
         }
         continue;
       }
