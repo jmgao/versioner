@@ -12,3 +12,7 @@ android-19 - KOT49H
 android-21 - LRX21Q
 android-22 - LMY47X
 android-23 - MRA58K
+
+#### "bullhead for Nexus 5X
+android-24 - AOSP
+android-25 - AOSP
