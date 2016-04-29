@@ -30,6 +30,8 @@ static const std::set<std::string> supported_archs = { "arm", "arm64", "x86", "x
 static std::unordered_map<std::string, std::string> arch_targets = {
   { "arm", "arm-linux-androideabi" },
   { "arm64", "aarch64-linux-android" },
+  { "mips", "mipsel-linux-android" },
+  { "mips64", "mips64el-linux-android" },
   { "x86", "i686-linux-android" },
   { "x86_64", "x86_64-linux-android" },
 };
@@ -37,6 +39,8 @@ static std::unordered_map<std::string, std::string> arch_targets = {
 static std::map<std::string, std::set<int>> default_apis = {
   { "arm", { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 } },
   { "arm64", { 21, 23, 24 } },
+  { "mips", { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 } },
+  { "mips64", { 21, 23, 24 } },
   { "x86", { 9, 12, 13, 14, 15, 16, 18, 19, 21, 23, 24 } },
   { "x86_64", { 21, 23, 24 } },
 };
