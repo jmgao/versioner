@@ -367,6 +367,10 @@ int main(int argc, char** argv) {
       auto it = library_database.find(symbol_name);
       if (it == library_database.end()) {
         if (warn_unversioned) {
+          // Skip __INTRODUCED_IN_FUTURE.
+          if (symbol.availability().introduced == 10000) {
+            continue;
+          }
           fprintf(stderr, "Exported symbol %s not found in any libraries\n", symbol_name.c_str());
           symbol.dump(cwd, std::cerr);
         }
