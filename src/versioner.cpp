@@ -64,6 +64,8 @@ class HeaderCompilationDatabase : public CompilationDatabase {
       command.push_back("-isystem");
       command.push_back(dir);
     }
+    command.push_back("-std=c11");
+    command.push_back("-D_FILE_OFFSET_BITS=64");
     command.push_back("-DANDROID");
     command.push_back(StringPrintf("-D__ANDROID_API__=%d", api_level));
     command.push_back("-D_FORTIFY_SOURCE=2");
