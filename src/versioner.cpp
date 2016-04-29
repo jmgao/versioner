@@ -387,6 +387,18 @@ int main(int argc, char** argv) {
           high = INT_MAX;
         }
 
+        if (compare_availability_stubs) {
+          if (library_availability.size() != 0) {
+            int lib_available = *library_availability.begin();
+            if (lib_available < low) {
+              fprintf(stderr,
+                      "Availablility mismatch for %s, first available in %d, tagged as %d\n",
+                      symbol_name.c_str(), lib_available, low);
+              symbol.dump(cwd, std::cerr);
+            }
+          }
+        }
+
         for (int api_level : api_levels) {
           if (api_level < low || api_level > high) {
             continue;
