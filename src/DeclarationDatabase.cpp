@@ -1,9 +1,37 @@
-#include "HeaderDatabase.h"
+/*
+ * Copyright (C) 2016 The Android Open Source Project
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#include "DeclarationDatabase.h"
 
 #include <iostream>
+#include <map>
 #include <set>
 #include <string>
-#include <map>
 
 #include "clang/AST/AST.h"
 #include "clang/AST/Attr.h"
@@ -17,11 +45,9 @@ using namespace clang;
 class Visitor : public RecursiveASTVisitor<Visitor> {
   HeaderDatabase& database;
   std::unique_ptr<MangleContext> mangler;
-  int api_level;
 
  public:
-  Visitor(HeaderDatabase& database, ASTContext& ctx, int api_level)
-      : database(database), api_level(api_level) {
+  Visitor(HeaderDatabase& database, ASTContext& ctx) : database(database) {
     mangler.reset(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
   }
 
@@ -59,23 +85,23 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       return true;
     }
 
-    SymbolType symbol_type;
+    DeclarationType declaration_type;
     FunctionDecl* function_decl = dyn_cast<FunctionDecl>(decl);
     VarDecl* var_decl = dyn_cast<VarDecl>(decl);
 
-    std::string symbol_name = getDeclName(named_decl);
+    std::string declaration_name = getDeclName(named_decl);
     bool is_extern = named_decl->getFormalLinkage() == ExternalLinkage;
     bool is_definition = false;
 
     if (function_decl) {
-      symbol_type = SymbolType::function;
+      declaration_type = DeclarationType::function;
       is_definition = function_decl->isThisDeclarationADefinition();
     } else if (var_decl) {
       if (!var_decl->isFileVarDecl()) {
         return true;
       }
 
-      symbol_type = SymbolType::variable;
+      declaration_type = DeclarationType::variable;
       switch (var_decl->isThisDeclarationADefinition()) {
         case VarDecl::DeclarationOnly:
           is_definition = false;
@@ -87,7 +113,8 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
 
         case VarDecl::TentativeDefinition:
           // Forbid tentative definitions in headers.
-          fprintf(stderr, "ERROR: symbol '%s' is a tentative definition\n", symbol_name.c_str());
+          fprintf(stderr, "ERROR: declaration '%s' is a tentative definition\n",
+                  declaration_name.c_str());
           decl->dump();
           abort();
       }
@@ -101,7 +128,7 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
     }
 
     // Look for availability annotations.
-    SymbolAvailability availability;
+    DeclarationAvailability availability;
     for (const AvailabilityAttr* attr : decl->specific_attrs<AvailabilityAttr>()) {
       if (attr->getPlatform()->getName() != "android") {
         fprintf(stderr, "skipping non-android platform %s\n",
@@ -114,35 +141,36 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       if (attr->getDeprecated().getMajor() != 0) {
         availability.deprecated = attr->getDeprecated().getMajor();
       }
-      if (attr->getObsoleted().getMajor()) {
+      if (attr->getObsoleted().getMajor() != 0) {
         availability.obsoleted = attr->getObsoleted().getMajor();
       }
     }
 
-    // Find or insert an entry for the symbol.
-    auto symbol_it = database.symbols.find(symbol_name);
-    if (symbol_it == database.symbols.end()) {
-      Symbol symbol = {.name = symbol_name };
+    // Find or insert an entry for the declaration.
+    auto declaration_it = database.declarations.find(declaration_name);
+    if (declaration_it == database.declarations.end()) {
+      Declaration declaration = {.name = declaration_name };
       bool inserted;
-      std::tie(symbol_it, inserted) = database.symbols.insert({ symbol_name, symbol });
+      std::tie(declaration_it, inserted) =
+        database.declarations.insert({ declaration_name, declaration });
     }
 
-    auto& symbol_locations = symbol_it->second.locations;
+    auto& declaration_locations = declaration_it->second.locations;
     auto presumed_loc = src_manager.getPresumedLoc(decl->getLocation());
-    SymbolLocation location = {
+    DeclarationLocation location = {
       .filename = presumed_loc.getFilename(),
       .line_number = presumed_loc.getLine(),
       .column = presumed_loc.getColumn(),
-      .type = symbol_type,
+      .type = declaration_type,
       .is_extern = is_extern,
       .is_definition = is_definition,
       .availability = availability,
     };
 
     // It's fine if the location is already there, we'll get an iterator to the existing element.
-    auto location_it = symbol_locations.begin();
+    auto location_it = declaration_locations.begin();
     bool inserted = false;
-    std::tie(location_it, inserted) = symbol_locations.insert(location);
+    std::tie(location_it, inserted) = declaration_locations.insert(location);
 
     // If we didn't insert, check to see if the availability attributes are identical.
     if (!inserted) {
@@ -153,14 +181,12 @@ class Visitor : public RecursiveASTVisitor<Visitor> {
       }
     }
 
-    location_it->addAPI(api_level);
-
     return true;
   }
 };
 
-void HeaderDatabase::parseAST(ASTUnit* ast, int api_level) {
+void HeaderDatabase::parseAST(ASTUnit* ast) {
   ASTContext& ctx = ast->getASTContext();
-  Visitor visitor(*this, ctx, api_level);
+  Visitor visitor(*this, ctx);
   visitor.TraverseDecl(ctx.getTranslationUnitDecl());
 }

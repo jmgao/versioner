@@ -1,7 +1,34 @@
-#undef NDEBUG
-#include <assert.h>
+/*
+ * Copyright (C) 2016 The Android Open Source Project
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include <dirent.h>
 #include <err.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -12,54 +39,35 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
-#include "android-base/stringprintf.h"
 #include "clang/Tooling/Tooling.h"
 
-#include "HeaderDatabase.h"
-#include "LibraryDatabase.h"
+#include "DeclarationDatabase.h"
+#include "SymbolDatabase.h"
 #include "Utils.h"
+#include "versioner.h"
 
+using namespace std::string_literals;
 using namespace clang::tooling;
-using android::base::StringPrintf;
 
-static const std::string default_arch = "arm";
-static const std::set<std::string> supported_archs = { "arm", "arm64", "x86", "x86_64" };
-static std::unordered_map<std::string, std::string> arch_targets = {
-  { "arm", "arm-linux-androideabi" },
-  { "arm64", "aarch64-linux-android" },
-  { "mips", "mipsel-linux-android" },
-  { "mips64", "mips64el-linux-android" },
-  { "x86", "i686-linux-android" },
-  { "x86_64", "x86_64-linux-android" },
-};
-
-static std::map<std::string, std::set<int>> default_apis = {
-  { "arm", { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 } },
-  { "arm64", { 21, 23, 24 } },
-  { "mips", { 9, 12, 13, 14, 15, 16, 17, 17, 18, 19, 21, 23, 24 } },
-  { "mips64", { 21, 23, 24 } },
-  { "x86", { 9, 12, 13, 14, 15, 16, 18, 19, 21, 23, 24 } },
-  { "x86_64", { 21, 23, 24 } },
-};
+bool verbose;
 
 class HeaderCompilationDatabase : public CompilationDatabase {
+  CompilationType type;
   std::string cwd;
   std::vector<std::string> headers;
   std::vector<std::string> include_dirs;
-  int api_level;
-  std::string target;
 
  public:
-  HeaderCompilationDatabase(std::string cwd, std::vector<std::string> headers,
-                            std::vector<std::string> include_dirs, int api_level, std::string target)
-      : cwd(std::move(cwd)),
+  HeaderCompilationDatabase(CompilationType type, std::string cwd, std::vector<std::string> headers,
+                            std::vector<std::string> include_dirs)
+      : type(type),
+        cwd(std::move(cwd)),
         headers(std::move(headers)),
-        include_dirs(std::move(include_dirs)),
-        api_level(api_level),
-        target(std::move(target)) {
+        include_dirs(std::move(include_dirs)) {
   }
 
   CompileCommand generateCompileCommand(const std::string& filename) const {
@@ -69,14 +77,14 @@ class HeaderCompilationDatabase : public CompilationDatabase {
       command.push_back(dir);
     }
     command.push_back("-std=c11");
-    command.push_back("-D_FILE_OFFSET_BITS=64");
     command.push_back("-DANDROID");
-    command.push_back(StringPrintf("-D__ANDROID_API__=%d", api_level));
+    command.push_back("-D__ANDROID_API__="s + std::to_string(type.api_level));
     command.push_back("-D_FORTIFY_SOURCE=2");
     command.push_back("-D_GNU_SOURCE");
     command.push_back("-Wno-unknown-attributes");
     command.push_back("-target");
-    command.push_back(target);
+    command.push_back(arch_targets[type.arch]);
+
     return CompileCommand(cwd, filename, command);
   }
 
@@ -99,18 +107,22 @@ class HeaderCompilationDatabase : public CompilationDatabase {
   }
 };
 
-static void compileHeaders(HeaderDatabase& database, const char* header_directory, const char* deps,
-                           const std::string& arch, int api_level) {
-  std::string cwd = getWorkingDir();
-  std::vector<std::string> headers = collectFiles(header_directory);
+struct CompilationRequirements {
+  std::vector<std::string> headers;
+  std::vector<std::string> dependencies;
+};
 
-  std::vector<std::string> dependencies = { header_directory };
-  if (deps) {
-    std::string dep_directory = deps;
+static CompilationRequirements collectRequirements(const std::string& arch,
+                                                   const std::string& header_dir,
+                                                   const std::string& dependency_dir) {
+  std::vector<std::string> headers = collectFiles(header_dir);
+
+  std::vector<std::string> dependencies = { header_dir };
+  if (!dependency_dir.empty()) {
     auto collect_children = [&dependencies](const std::string& dir_path) {
       DIR* dir = opendir(dir_path.c_str());
       if (!dir) {
-        err(1, "failed to open dependency directory");
+        err(1, "failed to open dependency dir");
       }
 
       struct dirent* dent;
@@ -118,327 +130,453 @@ static void compileHeaders(HeaderDatabase& database, const char* header_director
         if (dent->d_name[0] == '.') {
           continue;
         }
-        dependencies.push_back(dir_path + "/" + dent->d_name);
+
+        // TODO: Resolve symlinks.
+        std::string dependency = dir_path + "/" + dent->d_name;
+        dependencies.push_back(dependency);
       }
 
       closedir(dir);
     };
 
-    collect_children(dep_directory + "/common");
-    collect_children(dep_directory + "/" + arch);
+    collect_children(dependency_dir + "/common");
+    collect_children(dependency_dir + "/" + arch);
   }
 
-  HeaderCompilationDatabase compilationDatabase(cwd, headers, dependencies, api_level,
-                                                arch_targets[arch]);
-  ClangTool tool(compilationDatabase, headers);
+  auto new_end = std::remove_if(headers.begin(), headers.end(), [&arch](const std::string& header) {
+    for (const auto& it : header_blacklist) {
+      if (it.second.find(arch) == it.second.end()) {
+        continue;
+      }
 
-  std::vector<std::unique_ptr<clang::ASTUnit>> asts;
-  tool.buildASTs(asts);
-  for (const auto& ast : asts) {
-    database.parseAST(ast.get(), api_level);
-  }
+      if (EndsWith(header, "/" + it.first)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  headers.erase(new_end, headers.end());
+
+  CompilationRequirements result = { .headers = headers, .dependencies = dependencies };
+  return result;
 }
 
-void usage() {
-  printf("Usage: versioner [OPTION]... HEADER_PATH [DEPS_PATH]\n");
-  printf("Compile and parse headers at HEADER_PATH, with DEPS_PATH on the include path\n");
-  printf("\n");
-  printf("Target specification:\n");
-  printf("  -a API_LEVEL\tbuild with the specified API level (can be repeated)\n");
-  printf("  -p ARCH\tbuild with the specified architecture\n");
-  printf("    \t\tvalid arguments are %s\n", Join(supported_archs).c_str());
-  printf("    \t\tdefaults to %s\n", default_arch.c_str());
-  printf("\n");
-  printf("Header compilation:\n");
-  printf("  -f\t\tdump functions exposed in header dir\n");
-  printf("  -v\t\tdump variables exposed in header dir\n");
-  printf("  -m\t\tdump multiply-declared symbols\n");
-  printf("\n");
-  printf("Library inspection:\n");
-  printf("  -l LIB_PATH\tinspect libraries at LIB_PATH\n");
-  printf("  -d\t\tdump symbol availability in libraries\n");
-  printf("  -c\t\tcompare availability attributes against ndk stub libraries\n");
-  printf("  -r\t\tcompare availability attributes against real device libraries\n");
-  printf("  -u\t\twarn on unversioned symbols\n");
+static std::set<CompilationType> generateCompilationTypes(
+  const std::set<std::string> selected_architectures, const std::set<int>& selected_levels) {
+  std::set<CompilationType> result;
+  for (const std::string& arch : selected_architectures) {
+    int min_api = arch_min_api[arch];
+    for (int api_level : selected_levels) {
+      if (api_level < min_api) {
+        continue;
+      }
+      CompilationType type = { .arch = arch, .api_level = api_level };
+      result.insert(type);
+    }
+  }
+  return result;
+}
+
+using DeclarationDatabase = std::map<std::string, std::map<CompilationType, Declaration>>;
+
+static DeclarationDatabase transposeHeaderDatabases(
+  const std::map<CompilationType, HeaderDatabase>& original) {
+  DeclarationDatabase result;
+  for (const auto& outer : original) {
+    const CompilationType& type = outer.first;
+    for (const auto& inner : outer.second.declarations) {
+      const std::string& symbol_name = inner.first;
+      result[symbol_name][type] = inner.second;
+    }
+  }
+  return result;
+}
+
+static DeclarationDatabase compileHeaders(const std::set<CompilationType>& types,
+                                          const std::string& header_dir,
+                                          const std::string& dependency_dir) {
+  constexpr size_t thread_count = 8;
+  size_t threads_created = 0;
+  std::mutex mutex;
+  std::vector<std::thread> threads(thread_count);
+
+  std::map<CompilationType, HeaderDatabase> header_databases;
+  std::unordered_map<std::string, CompilationRequirements> requirements;
+
+  std::string cwd = getWorkingDir();
+
+  for (const auto& arch : supported_archs) {
+    requirements[arch] = collectRequirements(arch, header_dir, dependency_dir);
+  }
+
+  for (CompilationType type : types) {
+    size_t thread_id = threads_created++;
+    if (thread_id >= thread_count) {
+      thread_id = thread_id % thread_count;
+      threads[thread_id].join();
+    }
+
+    threads[thread_id] = std::thread(
+      [&](CompilationType type) {
+        const auto& req = requirements[type.arch];
+
+        HeaderDatabase database;
+        HeaderCompilationDatabase compilationDatabase(type, cwd, req.headers, req.dependencies);
+        ClangTool tool(compilationDatabase, req.headers);
+
+        std::vector<std::unique_ptr<clang::ASTUnit>> asts;
+        tool.buildASTs(asts);
+        for (const auto& ast : asts) {
+          database.parseAST(ast.get());
+        }
+
+        std::unique_lock<std::mutex> l(mutex);
+        header_databases[type] = database;
+      },
+      type);
+  }
+
+  if (threads_created < thread_count) {
+    threads.resize(threads_created);
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  return transposeHeaderDatabases(header_databases);
+}
+
+static bool sanityCheck(const std::set<CompilationType>& types,
+                        const DeclarationDatabase& database) {
+  bool error = false;
+  for (auto outer : database) {
+    const std::string& symbol_name = outer.first;
+    CompilationType last_type;
+    DeclarationAvailability last_availability;
+
+    for (CompilationType type : types) {
+      auto inner = outer.second.find(type);
+      if (inner == outer.second.end()) {
+        // TODO: Check for holes.
+        continue;
+      }
+
+      const Declaration& declaration = inner->second;
+      bool found_availability = false;
+      bool availability_mismatch = false;
+      DeclarationAvailability current_availability;
+
+      // Make sure that all of the availability declarations for this symbol match.
+      for (const DeclarationLocation& location : declaration.locations) {
+        if (!found_availability) {
+          found_availability = true;
+          current_availability = location.availability;
+          continue;
+        }
+
+        if (current_availability != location.availability) {
+          availability_mismatch = true;
+          error = true;
+        }
+      }
+
+      if (availability_mismatch) {
+        printf("%s: availability mismatch for %s\n", symbol_name.c_str(), type.describe().c_str());
+        declaration.dump(getWorkingDir() + "/");
+      }
+
+      if (type.arch != last_type.arch) {
+        last_type = type;
+        last_availability = current_availability;
+        continue;
+      }
+
+      // Make sure that availability declarations are consistent across API levels for a given arch.
+      if (last_availability != current_availability) {
+        error = true;
+        printf("%s: availability mismatch between %s and %s: %s before, %s after\n",
+               symbol_name.c_str(), last_type.describe().c_str(), type.describe().c_str(),
+               last_availability.describe().c_str(), current_availability.describe().c_str());
+      }
+
+      last_type = type;
+    }
+  }
+  return !error;
+}
+
+static bool checkVersions(const std::set<CompilationType>& compilation_types,
+                          const DeclarationDatabase& declaration_database,
+                          const NdkSymbolDatabase& symbol_database) {
+  bool failed = false;
+
+  // Map from symbol name to a map from arch to availability.
+  std::map<std::string, std::map<std::string, Declaration>> symbol_availability;
+
+  for (const auto& outer : declaration_database) {
+    const std::string& symbol_name = outer.first;
+    const std::map<CompilationType, Declaration>& declarations = outer.second;
+
+    for (const auto& inner : declarations) {
+      std::map<std::string, Declaration>& arch_map = symbol_availability[symbol_name];
+
+      if (arch_map.count(inner.first.arch) == 0) {
+        arch_map[inner.first.arch] = inner.second;
+      }
+    }
+  }
+
+  for (const auto& outer : symbol_availability) {
+    const std::string& symbol_name = outer.first;
+    const std::map<std::string, Declaration>& arch_availability = outer.second;
+
+    std::set<std::string> missing_types;
+    size_t total_types = 0;
+    for (const auto& inner : arch_availability) {
+      const std::string& arch = inner.first;
+      const Declaration& declaration = inner.second;
+      for (int api_level : supported_levels) {
+        if (api_level < arch_min_api[arch]) {
+          continue;
+        }
+
+        const DeclarationAvailability& availability = declaration.locations.begin()->availability;
+        if (availability.introduced != 0 && api_level < availability.introduced) {
+          continue;
+        } else if (availability.obsoleted != 0 && api_level >= availability.obsoleted) {
+          continue;
+        }
+
+        ++total_types;
+
+        CompilationType type = { .arch = inner.first, .api_level = api_level };
+        type.api_level = api_level;
+
+        auto symbol_it = symbol_database.find(symbol_name);
+        if (symbol_it == symbol_database.end()) {
+          if (verbose) {
+            printf("%s: not available in any platform\n", symbol_name.c_str());
+            failed = true;
+          }
+          break;
+        }
+
+        const std::map<CompilationType, NdkSymbolType>& symbol_availability = symbol_it->second;
+        auto availability_it = symbol_availability.find(type);
+
+        if (availability_it == symbol_availability.end()) {
+          // Check to see if the symbol exists as an inline definition.
+          CompilationType type = { .arch = arch, .api_level = api_level };
+
+          const auto& declaration_map = declaration_database.find(symbol_name)->second;
+          auto it = declaration_map.find(type);
+          if (it == declaration_map.end()) {
+            printf("%s: symbol not available in %s\n", symbol_name.c_str(), type.describe().c_str());
+            continue;
+          }
+
+          if (!it->second.hasDefinition()) {
+            missing_types.insert(type.describe());
+            failed = true;
+            continue;
+          }
+        }
+
+        switch (availability_it->second) {
+          case NdkSymbolType::function:
+            if (declaration.type() != DeclarationType::function) {
+              printf("%s: symbol exists as function, declared as %s\n", symbol_name.c_str(),
+                     declarationTypeName(declaration.type()));
+            }
+            break;
+
+          case NdkSymbolType::variable:
+            if (declaration.type() != DeclarationType::variable) {
+              printf("%s: symbol exists as function, declared as %s\n", symbol_name.c_str(),
+                     declarationTypeName(declaration.type()));
+            }
+            break;
+        }
+      }
+    }
+
+    if (!missing_types.empty()) {
+      // If the symbol is missing everywhere, only warn if verbose.
+      if (missing_types.size() != total_types || verbose) {
+        printf("%s: missing in [%s]\n", symbol_name.c_str(), Join(missing_types, ", ").c_str());
+      }
+    }
+  }
+
+  using AvailabilityMismatch =
+    std::tuple<std::string, unsigned int, std::string, std::string, std::string>;
+  std::set<AvailabilityMismatch> mismatches;
+
+  // Make sure that we expose declarations for all available versions.
+  for (const auto& outer : symbol_database) {
+    const std::string& symbol_name = outer.first;
+    std::set<std::string> warned_archs;
+
+    auto decl_it = declaration_database.find(symbol_name);
+    if (decl_it == declaration_database.end()) {
+      // It's okay for a symbol to not be declared at all.
+      continue;
+    }
+
+    for (const auto& inner : outer.second) {
+      const CompilationType& type = inner.first;
+      auto symbol_it = decl_it->second.find(type);
+      if (symbol_it == decl_it->second.end()) {
+        printf("%s: failed to find declaration for %s\n", symbol_name.c_str(),
+               type.describe().c_str());
+        failed = true;
+        continue;
+      }
+
+      DeclarationAvailability availability = symbol_it->second.locations.begin()->availability;
+      if ((availability.introduced > 0 && availability.introduced > type.api_level) ||
+          (availability.obsoleted > 0 && availability.obsoleted <= type.api_level)) {
+        if (warned_archs.count(type.arch)) {
+          continue;
+        }
+
+        DeclarationLocation location =
+          *declaration_database.find(symbol_name)->second.find(type)->second.locations.begin();
+
+        mismatches.emplace(location.filename, location.line_number, symbol_name.c_str(),
+                           type.describe(), availability.describe());
+        warned_archs.insert(type.arch);
+        failed = true;
+      }
+    }
+  }
+
+  for (const auto& mismatch : mismatches) {
+    const std::string& filename = std::get<0>(mismatch);
+    const unsigned int line_number = std::get<1>(mismatch);
+    const std::string& symbol_name = std::get<2>(mismatch);
+    const std::string& arch = std::get<3>(mismatch);
+    const std::string& availability = std::get<4>(mismatch);
+    printf("%s: available in %s, but availability declared as %s (at %s:%u)\n", symbol_name.c_str(),
+           arch.c_str(), availability.c_str(), filename.c_str(), line_number);
+  }
+
+  return !failed;
+}
+
+static void usage() {
+  fprintf(stderr, "Usage: versioner [OPTION]... HEADER_PATH [DEPS_PATH]\n");
+  fprintf(stderr, "Version headers at HEADER_PATH, with DEPS_PATH/* on the include path\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Target specification (defaults to all):\n");
+  fprintf(stderr, "  -a API_LEVEL\tbuild with specified API level (can be repeated)\n");
+  fprintf(stderr, "    \t\tvalid levels are %s\n", Join(supported_levels).c_str());
+  fprintf(stderr, "  -r ARCH\tbuild with specified architecture (can be repeated)\n");
+  fprintf(stderr, "    \t\tvalid architectures are %s\n", Join(supported_archs).c_str());
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Validation:\n");
+  fprintf(stderr, "  -p PLATFORM_PATH\tcompare against NDK platform at PLATFORM_PATH\n");
+  fprintf(stderr, "  -d\t\tdump symbol availability in libraries\n");
+  fprintf(stderr, "  -v\t\tenable verbose warnings\n");
   exit(1);
 }
 
 int main(int argc, char** argv) {
-  HeaderDatabase header_database;
-
   std::string cwd = getWorkingDir() + "/";
-  std::set<int> api_levels;
-  std::string arch = default_arch;
   bool default_args = true;
-  bool dump_symbols = false;
-  bool dump_multiply_declared = false;
-  bool list_functions = false;
-  bool list_variables = false;
-  bool compare_availability_stubs = false;
-  bool compare_availability_real = false;
-  bool warn_unversioned = false;
-  const char* library_dir = nullptr;
+  std::string platform_dir;
+  std::set<std::string> selected_architectures;
+  std::set<int> selected_levels;
 
   int c;
-  while ((c = getopt(argc, argv, "a:p:fvml:dcru")) != -1) {
+  while ((c = getopt(argc, argv, "a:r:p:n:duv")) != -1) {
     default_args = false;
     switch (c) {
       case 'a': {
-        char *end;
+        char* end;
         int api_level = strtol(optarg, &end, 10);
         if (end == optarg || strlen(end) > 0) {
           usage();
         }
-        api_levels.insert(api_level);
+
+        if (supported_levels.count(api_level) == 0) {
+          errx(1, "unsupported API level %d", api_level);
+        }
+
+        selected_levels.insert(api_level);
         break;
       }
-      case 'p':
-        arch = optarg;
+
+      case 'r': {
+        if (supported_archs.count(optarg) == 0) {
+          errx(1, "unsupported architecture: %s", optarg);
+        }
+        selected_architectures.insert(optarg);
         break;
-      case 'f':
-        list_functions = true;
-        break;
-      case 'v':
-        list_variables = true;
-        break;
-      case 'm':
-        dump_multiply_declared = true;
-        break;
-      case 'l': {
-        if (library_dir) {
+      }
+
+      case 'p': {
+        if (!platform_dir.empty()) {
           usage();
         }
 
-        library_dir = optarg;
+        platform_dir = optarg;
 
         struct stat st;
-        if (stat(library_dir, &st) != 0) {
-          err(1, "failed to stat library dir");
+        if (stat(platform_dir.c_str(), &st) != 0) {
+          err(1, "failed to stat platform directory '%s'", platform_dir.c_str());
         }
         if (!S_ISDIR(st.st_mode)) {
           errx(1, "%s is not a directory", optarg);
         }
         break;
       }
-      case 'd':
-        dump_symbols = true;
+
+      case 'v':
+        verbose = true;
         break;
-      case 'c':
-        compare_availability_stubs = true;
-        break;
-      case 'r':
-        compare_availability_real = true;
-        break;
-      case 'u':
-        warn_unversioned = true;
-        break;
+
       default:
         usage();
         break;
     }
   }
 
-  if (compare_availability_stubs && compare_availability_real) {
-    errx(1, "-c and -r are mutually exclusive");
-  }
-
-  if ((compare_availability_stubs || compare_availability_real) && !library_dir) {
-    errx(1, "can't validate availability without libraries to compare against");
-  }
-
-  if (default_args) {
-    dump_symbols = true;
-    dump_multiply_declared = true;
-  }
-
   if (argc - optind > 2 || optind >= argc) {
     usage();
   }
 
-  if (api_levels.empty()) {
-    api_levels = default_apis[arch];
+  if (selected_levels.empty()) {
+    selected_levels = supported_levels;
   }
 
-  const char* dependencies = (argc - optind == 2) ? argv[optind + 1] : nullptr;
-  for (int api_level : api_levels) {
-    compileHeaders(header_database, argv[optind], dependencies, arch, api_level);
+  if (selected_architectures.empty()) {
+    selected_architectures = supported_archs;
   }
 
-  std::map<std::string, std::set<int>> library_database;
-  if (library_dir) {
-    for (int api_level : api_levels) {
-      std::unordered_set<std::string> symbols;
+  std::string dependencies = (argc - optind == 2) ? argv[optind + 1] : "";
+  std::set<CompilationType> compilation_types;
+  DeclarationDatabase declaration_database;
+  NdkSymbolDatabase symbol_database;
 
-      std::string api_dir = StringPrintf("%s/%s/android-%d/", library_dir, arch.c_str(), api_level);
-      std::vector<std::string> libraries = collectFiles(api_dir.c_str());
-      for (const std::string& library : libraries) {
-        std::unordered_set<std::string> lib_symbols = getSymbols(library);
-        for (const std::string& symbol_name : lib_symbols) {
-          library_database[symbol_name].insert(api_level);
-        }
-      }
-    }
+  compilation_types = generateCompilationTypes(selected_architectures, selected_levels);
+
+  // Do this before compiling so that we can early exit if the platforms don't match what we expect.
+  if (!platform_dir.empty()) {
+    symbol_database = parsePlatforms(compilation_types, platform_dir);
   }
 
-  if (dump_symbols) {
-    printf("\nSymbols:\n");
-    for (auto pair : library_database) {
-      std::string message = pair.first + ": " + Join(api_levels);
-      printf("    %s\n", message.c_str());
-    }
+  declaration_database = compileHeaders(compilation_types, argv[optind], dependencies);
+
+  if (!sanityCheck(compilation_types, declaration_database)) {
+    return 1;
   }
 
-  if (list_functions) {
-    printf("\nFunctions:\n");
-    for (const auto& pair : header_database.symbols) {
-      if (pair.second.type() == SymbolType::function) {
-        pair.second.dump(cwd);
-      }
-    }
-  }
-
-  if (list_variables) {
-    printf("\nVariables:\n");
-    for (const auto& pair : header_database.symbols) {
-      if (pair.second.type() == SymbolType::variable) {
-        pair.second.dump(cwd);
-      }
-    }
-  }
-
-  if (dump_multiply_declared) {
-    std::vector<const Symbol*> multiply_declared;
-    for (const auto& pair : header_database.symbols) {
-      for (int api_level : api_levels) {
-        if (pair.second.getDeclarationType(api_level) == SymbolDeclarationType::multiply_declared) {
-          multiply_declared.push_back(&pair.second);
-          break;
-        }
-      }
-    }
-
-    printf("\n");
-
-    if (multiply_declared.size() > 0) {
-      printf("Multiply declared symbols:\n");
-      for (const Symbol* symbol : multiply_declared) {
-        symbol->dump(cwd);
-      }
-    } else {
-      printf("No multiply declared symbols.\n");
-    }
-  }
-
-  // If we're comparing against the stub libraries, we want to ensure that everything visible in the
-  // stub library is visible in the headers, and vice versa. If we're comparing against the real
-  // libraries, we only want to make sure that what's visible in the headers is visible in the
-  // library, since a symbol might exist in a previous version, but be intentionally hidden in
-  // the NDK stub (e.g. because it's broken before a certain version).
-  if (compare_availability_stubs) {
-    for (const auto& pair : library_database) {
-      const std::string& symbol_name = pair.first;
-      const std::set<int>& symbol_api_levels = pair.second;
-
-      // Make sure symbols never disappear from stubs.
-      bool found = false;
-      std::set<int> expected;
-      for (int api_level : api_levels) {
-        if (!found && symbol_api_levels.count(api_level)) {
-          found = true;
-        } else if (found && !symbol_api_levels.count(api_level)) {
-          expected.insert(api_level);
-        }
-      }
-
-      if (!expected.empty()) {
-        fprintf(stderr, "Gap in library availability for %s: expected to be found in %s\n",
-                symbol_name.c_str(), Join(expected).c_str());
-      }
-    }
-  }
-
-  if (compare_availability_stubs || compare_availability_real) {
-    std::map<int, std::set<std::string>> missing_version;
-
-    for (const auto& pair : header_database.symbols) {
-      const std::string& symbol_name = pair.first;
-      const Symbol& symbol = pair.second;
-
-      auto it = library_database.find(symbol_name);
-      if (it == library_database.end()) {
-        if (warn_unversioned) {
-          // Skip __INTRODUCED_IN_FUTURE.
-          if (symbol.availability().introduced == 10000) {
-            continue;
-          }
-          fprintf(stderr, "Exported symbol %s not found in any libraries\n", symbol_name.c_str());
-          symbol.dump(cwd, std::cerr);
-        }
-        continue;
-      }
-
-      const std::set<int>& library_availability = it->second;
-
-      if (!symbol.availability().empty()) {
-        // Check that the symbol is available for everything declared as available.
-        int low = symbol.availability().introduced;
-        int high = symbol.availability().obsoleted;
-        if (high == 0) {
-          high = INT_MAX;
-        }
-
-        if (compare_availability_stubs) {
-          if (library_availability.size() != 0) {
-            int lib_available = *library_availability.begin();
-            if (lib_available < low) {
-              fprintf(stderr,
-                      "Availablility mismatch for %s, first available in %d, tagged as %d\n",
-                      symbol_name.c_str(), lib_available, low);
-              symbol.dump(cwd, std::cerr);
-            }
-          }
-        }
-
-        for (int api_level : api_levels) {
-          if (api_level < low || api_level > high) {
-            continue;
-          }
-
-          if (library_availability.find(api_level) == library_availability.end()) {
-            fprintf(stderr, "Symbol %s is missing in API level %d\n", symbol_name.c_str(),
-                    api_level);
-          }
-        }
-      } else {
-        int first_available = *library_availability.begin();
-
-        // Allow missing library symbols if there's an inline definition.
-        // TODO: Make this more granular.
-        bool skip = false;
-        for (int api_level : api_levels) {
-          if (symbol.hasDefinition(api_level)) {
-            skip = true;
-          }
-        }
-
-        if (!skip && first_available > *api_levels.begin()) {
-          missing_version[first_available].insert(symbol_name);
-        }
-      }
-    }
-
-    if (!missing_version.empty()) {
-      for (const auto& pair : missing_version) {
-        const int api_level = pair.first;
-        const std::set<std::string>& missing_symbols = pair.second;
-
-        for (const std::string& symbol_name : missing_symbols) {
-          for (const SymbolLocation& symbol_loc : header_database.symbols[symbol_name].locations) {
-            printf("%d:%s:%s:%d\n", api_level, symbol_name.c_str(), symbol_loc.filename.c_str(),
-                   symbol_loc.line_number);
-          }
-        }
-      }
+  if (!platform_dir.empty()) {
+    if (!checkVersions(compilation_types, declaration_database, symbol_database)) {
+      return 1;
     }
   }
 

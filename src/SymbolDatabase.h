@@ -28,35 +28,21 @@
 
 #pragma once
 
+#include <map>
+#include <set>
 #include <string>
-#include <vector>
+#include <unordered_set>
 
-bool StartsWith(const std::string& string, const std::string& prefix);
-bool EndsWith(const std::string& string, const std::string& suffix);
-std::string getWorkingDir();
-std::vector<std::string> collectFiles(const std::string& directory);
+#include "DeclarationDatabase.h"
 
-namespace std {
-static __attribute__((unused)) std::string to_string(const char* c) {
-  return c;
-}
+using LibrarySymbolDatabase = std::unordered_set<std::string>;
+std::unordered_set<std::string> getSymbols(const std::string& filename);
 
-static __attribute__((unused)) std::string to_string(const std::string& str) {
-  return str;
-}
-}
+enum class NdkSymbolType {
+  function,
+  variable,
+};
 
-template <typename Collection>
-static std::string Join(Collection c, const std::string& delimiter = ", ") {
-  std::string result;
-  for (const auto& item : c) {
-    result.append(std::to_string(item));
-    result.append(delimiter);
-  }
-  if (!result.empty()) {
-    result.resize(result.length() - delimiter.length());
-  }
-  return result;
-}
-
-std::string Trim(const std::string& s);
+using NdkSymbolDatabase = std::map<std::string, std::map<CompilationType, NdkSymbolType>>;
+NdkSymbolDatabase parsePlatforms(const std::set<CompilationType>& types,
+                                 const std::string& platform_dir);

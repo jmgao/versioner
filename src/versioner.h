@@ -28,35 +28,44 @@
 
 #pragma once
 
+#include <map>
+#include <set>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
-bool StartsWith(const std::string& string, const std::string& prefix);
-bool EndsWith(const std::string& string, const std::string& suffix);
-std::string getWorkingDir();
-std::vector<std::string> collectFiles(const std::string& directory);
+extern bool verbose;
 
-namespace std {
-static __attribute__((unused)) std::string to_string(const char* c) {
-  return c;
-}
+static const std::set<std::string> supported_archs = {
+  "arm", "arm64", "mips", "mips64", "x86", "x86_64",
+};
 
-static __attribute__((unused)) std::string to_string(const std::string& str) {
-  return str;
-}
-}
+static std::unordered_map<std::string, std::string> arch_targets = {
+  { "arm", "arm-linux-androideabi" },
+  { "arm64", "aarch64-linux-android" },
+  { "mips", "mipsel-linux-android" },
+  { "mips64", "mips64el-linux-android" },
+  { "x86", "i686-linux-android" },
+  { "x86_64", "x86_64-linux-android" },
+};
 
-template <typename Collection>
-static std::string Join(Collection c, const std::string& delimiter = ", ") {
-  std::string result;
-  for (const auto& item : c) {
-    result.append(std::to_string(item));
-    result.append(delimiter);
-  }
-  if (!result.empty()) {
-    result.resize(result.length() - delimiter.length());
-  }
-  return result;
-}
+static const std::set<int> supported_levels = { 9, 12, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24 };
 
-std::string Trim(const std::string& s);
+// Non-const for the convenience of being able to index with operator[].
+static std::map<std::string, int> arch_min_api = {
+  { "arm", 9 },
+  { "arm64", 21 },
+  { "mips", 9 },
+  { "mips64", 21 },
+  { "x86", 9 },
+  { "x86_64", 21 },
+};
+
+static const std::unordered_map<std::string, std::set<std::string>> header_blacklist = {
+  // Internal header.
+  { "sys/_system_properties.h", supported_archs },
+
+  // time64.h #errors when included on LP64 archs.
+  { "time64.h", { "arm64", "mips64", "x86_64" } },
+};
+
+

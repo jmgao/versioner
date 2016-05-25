@@ -11,7 +11,7 @@ LOCAL_CFLAGS := -Wall -Wextra -Wno-unused-parameter
 LOCAL_CFLAGS += -D__STDC_CONSTANT_MACROS -D__STDC_LIMIT_MACROS -fno-rtti
 LOCAL_CPPFLAGS := $(LOCAL_CFLAGS) -std=c++14
 
-LOCAL_SRC_FILES := src/versioner.cpp src/HeaderDatabase.cpp src/LibraryDatabase.cpp src/Utils.cpp
-LOCAL_SHARED_LIBRARIES := libclang libLLVM libbase
+LOCAL_SRC_FILES := src/versioner.cpp src/DeclarationDatabase.cpp src/SymbolDatabase.cpp src/Utils.cpp
+LOCAL_SHARED_LIBRARIES := libclang libLLVM
 
 include $(BUILD_HOST_EXECUTABLE)
